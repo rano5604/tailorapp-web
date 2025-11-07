@@ -1,0 +1,146 @@
+.page {
+    min-height: 100dvh;
+    background: #fff;
+}
+
+.topBar {
+    height: 24px;
+    background: #5B21B6;
+}
+
+.header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid #eee;
+}
+
+.brand {
+    font-weight: 800;
+}
+
+.backBtn, .searchBtn {
+    border: none;
+    background: transparent;
+    font-size: 20px;
+    text-decoration: none;
+}
+
+.filters {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+}
+
+.filterLabel {
+    font-weight: 700;
+}
+
+.filterChip {
+    padding: 10px 14px;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    background: #fff;
+    color: #5B21B6;
+    font-weight: 700;
+    letter-spacing: .03em;
+}
+
+.list {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 12px 16px 24px;
+}
+
+.empty {
+    padding: 24px;
+    text-align: center;
+    color: #9ca3af;
+    border: 1px dashed #e5e7eb;
+    border-radius: 12px;
+}
+
+.card {
+    display: grid;
+    grid-template-columns: 64px 1fr auto;
+    gap: 12px;
+    background: #fff;
+    border: 1px solid #eee;
+    border-radius: 16px;
+    padding: 16px;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, .03);
+}
+
+.thumb {
+    width: 64px;
+    height: 64px;
+    background: #eef2f7;
+    border-radius: 12px;
+}
+
+.cardBody {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.title {
+    font-weight: 800;
+    font-size: 18px;
+}
+
+.subtitle {
+    color: #9ca3af;
+}
+
+.row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #6b7280;
+}
+
+.statusDot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #2563eb;
+    display: inline-block;
+}
+
+.meta {
+    color: #9ca3af;
+}
+
+.viewBtn {
+    align-self: start;
+    padding: 8px 14px;
+    border: 1.5px solid #e5e7eb;
+    background: #fff;
+    border-radius: 10px;
+    color: #5B21B6;
+    font-weight: 700;
+}
+
+/* Page title styles */
+.titleSection {
+    padding: 12px 16px 0;
+}
+
+.pageTitle {
+    font-size: 20px;
+    font-weight: 800;
+}
+
+.thumb {
+    width: 64px;
+    height: 64px;
+    border-radius: 12px;
+    overflow: hidden;
+    background: #eef2f7;
+    position: relative;
+    flex-shrink: 0;
+}
