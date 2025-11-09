@@ -1181,3 +1181,46 @@ body {
 .urgentLine{ display: flex; gap: 10px; align-items: center; justify-content: flex-end; }
 .urgentName{ font-weight: 700; color: #111827; }
 .urgentDate{ font-weight: 800; color: var(--accent-600); }
+/* 2-column tiny buttons row */
+.duoRow{
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+}
+
+/* Tiny CTA buttons (match screenshot) */
+.ctaWrap{ width: 100%; }
+
+.ctaBtn{
+    width: 100%;
+    height: 36px;
+    padding: 0 12px;
+    border-radius: 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    font-weight: 800;
+    font-size: 12px;
+    line-height: 1;
+    box-sizing: border-box;
+    user-select: none;
+}
+
+.ctaPrimary{
+    background: var(--accent);
+    color: #fff;
+    border: 1.5px solid var(--accent);
+    box-shadow: 0 2px 0 rgba(0,0,0,.06);
+}
+.ctaPrimary:hover{ filter: brightness(0.98); }
+
+.ctaOutline{
+    background: #fff;
+    color: var(--accent);
+    border: 1.5px solid #dbeafe;
+}
+.ctaOutline:hover{ filter: brightness(0.98); }
+
+/* Smaller icons inside tiny buttons */
+.ctaBtn svg{ width: 14px; height: 14px; }

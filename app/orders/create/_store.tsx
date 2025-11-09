@@ -4,7 +4,8 @@ import React, {
     createContext, useCallback, useContext, useEffect, useMemo, useState,
 } from 'react'
 
-const STORAGE_KEY = 'create-order:v3' // bumped to avoid stale shapes
+/* Bump when the persisted shape changes */
+const STORAGE_KEY = 'create-order:v4'
 
 export type Gender = 'MALE' | 'FEMALE' | 'OTHERS'
 export type MeasurementOption = 'NEW' | 'USE_LAST' | 'REUSE_CURRENT'
@@ -19,11 +20,15 @@ export type ItemParam = {
     suggestiveValues: string[] | null
 }
 
+/* Preview/base64 (or data URL) map used for UI previews */
 export type PhotosMap = Partial<Record<
     'orderCloth' | 'designPhoto' | 'patternPhoto' | 'measurementCloth' | 'designSketch',
     string
 >>
 export type PhotoKey = keyof PhotosMap
+
+/* Server image URLs from upload-base64 API */
+export type PhotoUrlsMap = Partial<Record<PhotoKey, string>>
 
 // A committed item in the order
 export type OrderItem = {
@@ -35,7 +40,8 @@ export type OrderItem = {
     makingCharge: number
     urgentDelivery?: boolean
     deliveryDate?: string | null
-    photos?: PhotosMap
+    photos?: PhotosMap        // preview copies for that item (optional)
+    photoUrls?: PhotoUrlsMap  // server URLs for that item (used for payload)
 }
 
 export type CreateOrderState = {
@@ -53,7 +59,8 @@ export type CreateOrderState = {
     itemParameters?: ItemParam[]
     measurementOption: MeasurementOption
     measurementValues?: Record<string | number, string | number | boolean>
-    photos?: PhotosMap
+    photos?: PhotosMap          // preview (data URLs) for current working item
+    photoUrls?: PhotoUrlsMap    // server URLs (from upload-base64) for current item
 
     // Committed items
     orderItems?: OrderItem[]
@@ -67,15 +74,22 @@ type Ctx = {
     setState: React.Dispatch<React.SetStateAction<CreateOrderState>>
     reset: () => void
 
-    // Existing helpers
+    // Convenience helpers
     selectItem: (args: { id?: number; name?: string; params?: ItemParam[] }) => void
     setMeasurementOption: (opt: MeasurementOption) => void
     setMeasurementValues: (patch: Record<string | number, string | number | boolean>) => void
+
+    // Photos (preview base64/data URL)
     setPhoto: (key: PhotoKey, dataUrl?: string) => void
+    // Photo URLs (server responses)
+    setPhotoUrl: (key: PhotoKey, url?: string) => void
+    // Set preview + server URL in one call
+    setPhotoPair: (key: PhotoKey, pair: { preview?: string; url?: string }) => void
+
     clearPhotos: () => void
     setExtras: (patch: Partial<Pick<CreateOrderState, 'makingCharge' | 'urgentDelivery' | 'deliveryDate' | 'remainingDeliveryDate'>>) => void
 
-    // New multi-item helpers
+    // Multi-item helpers
     addCurrentItem: () => { ok: true } | { ok: false; reason: string }
     startNewItem: () => void
 }
@@ -94,7 +108,9 @@ const defaultState: CreateOrderState = {
     makingCharge: '',
     urgentDelivery: false,
     deliveryDate: null,
+
     photos: {},
+    photoUrls: {},
 
     orderItems: [],
 
@@ -127,12 +143,14 @@ function clearWorkingFields(s: CreateOrderState): CreateOrderState {
         urgentDelivery: false,
         deliveryDate: null,
         photos: {},
+        photoUrls: {},
     }
 }
 
 export function CreateOrderProvider({ children }: { children: React.ReactNode }) {
     const [state, setState] = useState<CreateOrderState>(loadInitial)
 
+    // Persist to session storage
     useEffect(() => {
         try {
             sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state))
@@ -158,26 +176,44 @@ export function CreateOrderProvider({ children }: { children: React.ReactNode })
         setState(s => ({ ...s, measurementValues: { ...(s.measurementValues ?? {}), ...patch } }))
     }, [])
 
+    // Preview setter
     const setPhoto = useCallback<Ctx['setPhoto']>((key, dataUrl) => {
         setState(s => ({ ...s, photos: { ...(s.photos ?? {}), [key]: dataUrl } }))
     }, [])
 
+    // Server URL setter
+    const setPhotoUrl = useCallback<Ctx['setPhotoUrl']>((key, url) => {
+        setState(s => ({ ...s, photoUrls: { ...(s.photoUrls ?? {}), [key]: url } }))
+    }, [])
+
+    // Set both preview + server URL
+    const setPhotoPair = useCallback<Ctx['setPhotoPair']>((key, pair) => {
+        setState(s => ({
+            ...s,
+            photos: { ...(s.photos ?? {}), [key]: pair.preview },
+            photoUrls: { ...(s.photoUrls ?? {}), [key]: pair.url },
+        }))
+    }, [])
+
     const clearPhotos = useCallback<Ctx['clearPhotos']>(() => {
-        setState(s => ({ ...s, photos: {} }))
+        setState(s => ({ ...s, photos: {}, photoUrls: {} }))
     }, [])
 
     const setExtras = useCallback<Ctx['setExtras']>((patch) => {
         setState(s => ({ ...s, ...patch }))
     }, [])
 
-    // Commit current working item to orderItems and reset working fields
+    // Commit current working item and reset working fields
     const addCurrentItem = useCallback<Ctx['addCurrentItem']>(() => {
         let reason: string | undefined
         setState(prev => {
             if (!prev.itemId) { reason = 'No item selected'; return prev }
             const making =
-                typeof prev.makingCharge === 'number' ? prev.makingCharge :
-                    prev.makingCharge === '' || prev.makingCharge == null ? NaN : Number(prev.makingCharge)
+                typeof prev.makingCharge === 'number'
+                    ? prev.makingCharge
+                    : prev.makingCharge === '' || prev.makingCharge == null
+                        ? NaN
+                        : Number(prev.makingCharge)
             if (!Number.isFinite(making)) { reason = 'Invalid making charge'; return prev }
 
             const newItem: OrderItem = {
@@ -189,7 +225,8 @@ export function CreateOrderProvider({ children }: { children: React.ReactNode })
                 makingCharge: making,
                 urgentDelivery: prev.urgentDelivery,
                 deliveryDate: prev.deliveryDate ?? null,
-                photos: prev.photos,
+                photos: prev.photos,       // keep previews per item
+                photoUrls: prev.photoUrls, // keep server URLs per item
             }
             const nextItems = [...(prev.orderItems ?? []), newItem]
             return { ...clearWorkingFields(prev), orderItems: nextItems }
@@ -209,13 +246,25 @@ export function CreateOrderProvider({ children }: { children: React.ReactNode })
         setMeasurementOption,
         setMeasurementValues,
         setPhoto,
+        setPhotoUrl,
+        setPhotoPair,
         clearPhotos,
         setExtras,
         addCurrentItem,
         startNewItem,
     }), [
-        state, reset, selectItem, setMeasurementOption, setMeasurementValues,
-        setPhoto, clearPhotos, setExtras, addCurrentItem, startNewItem,
+        state,
+        reset,
+        selectItem,
+        setMeasurementOption,
+        setMeasurementValues,
+        setPhoto,
+        setPhotoUrl,
+        setPhotoPair,
+        clearPhotos,
+        setExtras,
+        addCurrentItem,
+        startNewItem,
     ])
 
     return (
