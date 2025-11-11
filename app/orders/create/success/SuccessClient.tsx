@@ -13,7 +13,7 @@ type OrderSuccessData = {
     totalAmount?: number;
     paidAmount?: number;
     dueAmount?: number;
-    orderDate?: string; // 'YYYY-MM-DD' or 'YYYYMMDD'
+    orderDate?: string;     // 'YYYY-MM-DD' or 'YYYYMMDD'
     trialDate?: string;
     deliveryDate?: string;
     customerName?: string;
@@ -22,30 +22,23 @@ type OrderSuccessData = {
     status?: string;
 };
 
-function pad(n: number, len = 4) {
-    return String(n).padStart(len, '0');
-}
+function pad(n: number, len = 4) { return String(n).padStart(len, '0'); }
 function todayYYYYMMDD() {
     const d = new Date();
     const mm = String(d.getMonth() + 1).padStart(2, '0');
     const dd = String(d.getDate()).padStart(2, '0');
     return `${d.getFullYear()}${mm}${dd}`;
 }
-// Accept 'YYYY-MM-DD' or 'YYYYMMDD'
 function normalizeIso(s?: string | null) {
     if (!s) return '';
-    if (/^\d{8}$/.test(s)) return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
+    if (/^\d{8}$/.test(s)) return `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}`;
     return s;
 }
 function fMoney(n?: number | null) {
     const v = Number(n ?? 0);
-    try {
-        return v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    } catch {
-        return String(v.toFixed(2));
-    }
+    try { return v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+    catch { return String(v.toFixed(2)); }
 }
-/* Token helpers */
 function getCookie(name: string) {
     if (typeof document === 'undefined') return null;
     const m = document.cookie.match(new RegExp('(^|; )' + name + '=([^;]*)'));
@@ -63,11 +56,6 @@ function getAuthToken(): string | null {
         null
     );
 }
-
-// Ensure an image src is usable by <img>:
-// - data URLs: keep as-is
-// - absolute http(s): keep as-is
-// - relative paths: make absolute using API_ORIGIN
 function ensureImgSrc(s?: string | null) {
     if (!s) return '';
     if (s.startsWith('data:image')) return s;
@@ -80,12 +68,12 @@ export default function SuccessClient() {
     const sp = useSearchParams();
     const { reset: resetCreateOrder } = useCreateOrder();
 
-    // Read params
+    // Params
     const shopIdParam = sp.get('shopId') || '';
     const orderDbId = sp.get('id') || '';
     const orderIdQuery = sp.get('orderId') || '';
 
-    // Order ID for display
+    // Display orderId
     const orderId = useMemo(() => {
         if (orderIdQuery) return orderIdQuery;
         const shop = Number(shopIdParam) || 1;
@@ -96,19 +84,17 @@ export default function SuccessClient() {
         return `${shop}-${ymd}-${pad(nextSeq, 4)}`;
     }, [orderIdQuery, shopIdParam]);
 
-    // Load last order payload saved by Confirm
+    // Data from confirm
     const orderData: OrderSuccessData | null = useMemo(() => {
         try {
             const raw = sessionStorage.getItem('create-order:last');
             return raw ? (JSON.parse(raw) as OrderSuccessData) : null;
-        } catch {
-            return null;
-        }
+        } catch { return null; }
     }, []);
 
-    // ===== QR handling (with retry) =====
-    const [qrSrc, setQrSrc] = useState<string | null>(null);
-    const [qrErr, setQrErr] = useState<string | null>(null);
+    // QR with retry
+    const [qrSrc, setQrSrc]   = useState<string | null>(null);
+    const [qrErr, setQrErr]   = useState<string | null>(null);
     const [attempt, setAttempt] = useState<number>(0);
     const [loading, setLoading] = useState<boolean>(false);
     const blobUrlRef = useRef<string | null>(null);
@@ -152,7 +138,7 @@ export default function SuccessClient() {
                 Accept: 'application/json,image/*',
             },
         };
-        if (method === 'POST') init.body = ''; // send empty body for POST variant
+        if (method === 'POST') init.body = '';
         const res = await fetch(api(`/api/orders/${orderDbId}/qrcode`), init);
         if (!res.ok) {
             const text = await res.text().catch(() => '');
@@ -164,44 +150,28 @@ export default function SuccessClient() {
     const fetchQrWithRetry = useCallback(async () => {
         if (!orderDbId) return;
         const token = getAuthToken();
-        if (!token) {
-            setQrErr('Session expired. Please log in again.');
-            return;
-        }
-        setLoading(true);
-        setQrErr(null);
-        setQrSrc(null);
+        if (!token) { setQrErr('Session expired. Please log in again.'); return; }
+        setLoading(true); setQrErr(null); setQrSrc(null);
 
-        let delay = 500;         // increases on each retry
-        const maxAttempts = 4;   // never changes
+        let delay = 500;
+        const maxAttempts = 4;
 
         for (let i = 1; i <= maxAttempts; i++) {
             setAttempt(i);
             try {
                 const method: 'GET' | 'POST' = i % 2 === 1 ? 'GET' : 'POST';
                 const src = await tryOnce(method, token);
-                setQrSrc(src);
-                setLoading(false);
-                setQrErr(null);
-                return;
+                setQrSrc(src); setLoading(false); setQrErr(null); return;
             } catch (e: any) {
-                if (i < maxAttempts) {
-                    await new Promise((r) => setTimeout(r, delay));
-                    delay *= 2;
-                    continue;
-                }
-                setQrErr(e?.message || 'Failed to load QR');
-                setLoading(false);
+                if (i < maxAttempts) { await new Promise(r => setTimeout(r, delay)); delay *= 2; continue; }
+                setQrErr(e?.message || 'Failed to load QR'); setLoading(false);
             }
         }
     }, [orderDbId]);
 
-    useEffect(() => {
-        fetchQrWithRetry();
-        return () => clearBlob();
-    }, [fetchQrWithRetry]);
+    useEffect(() => { fetchQrWithRetry(); return () => clearBlob(); }, [fetchQrWithRetry]);
 
-    // ===== Print handlers (uses print-only CSS) =====
+    // Print handlers
     const onPrintQR = () => {
         document.body.classList.add('print-qr');
         const after = () => {
@@ -211,232 +181,312 @@ export default function SuccessClient() {
         window.addEventListener('afterprint', after);
         window.print();
     };
+
+    // Receipt prints by default
     const onPrintReceipt = () => {
-        document.body.classList.add('print-receipt');
-        const after = () => {
-            document.body.classList.remove('print-receipt');
-            window.removeEventListener('afterprint', after);
-        };
-        window.addEventListener('afterprint', after);
         window.print();
     };
 
-    // Clear create-order caches + context when going home
+    // Clear caches
     const purgeCreateOrderCache = () => {
         try {
             for (let i = sessionStorage.length - 1; i >= 0; i--) {
-                const k = sessionStorage.key(i);
-                if (!k) continue;
+                const k = sessionStorage.key(i); if (!k) continue;
                 if (k.startsWith('create-order:') || k === 'create-order' || k === 'create-order:last') {
                     sessionStorage.removeItem(k);
                 }
             }
         } catch {}
-        try {
-            resetCreateOrder();
-        } catch {}
+        try { resetCreateOrder(); } catch {}
     };
-    const onBackHome = () => {
-        purgeCreateOrderCache();
-        router.push('/');
-    };
+    const onBackHome = () => { purgeCreateOrderCache(); router.push('/'); };
 
-    // ===== Receipt derived fields =====
-    const shopName = orderData?.shopName || 'Shop Name';
-    const ymd = todayYYYYMMDD();
-    const orderDateIso =
-        normalizeIso(orderData?.orderDate) ||
-        `${ymd.slice(0, 4)}-${ymd.slice(4, 6)}-${ymd.slice(6, 8)}`;
+    // Derived fields
+    const shopName        = orderData?.shopName || 'shop-02';
+    const orderDateIso    = normalizeIso(orderData?.orderDate) || `${todayYYYYMMDD().slice(0,4)}-${todayYYYYMMDD().slice(4,6)}-${todayYYYYMMDD().slice(6,8)}`;
     const deliveryDateIso = normalizeIso(orderData?.deliveryDate) || '—';
-    const customerName = orderData?.customerName || '—';
-    const totalAmount = orderData?.totalAmount ?? 0;
-    const paidAmount = orderData?.paidAmount ?? 0;
-    const dueAmount = orderData?.dueAmount ?? Math.max(totalAmount - paidAmount, 0);
-    const items =
-        orderData?.items && orderData.items.length > 0
-            ? orderData.items
-            : [{ itemName: 'Item', count: 1 }];
-    const totalUnits = items.reduce((s, it) => s + (Number(it.count) || 0), 0) || 1;
-
-    // Copy order id
-    const [copied, setCopied] = useState(false);
-    const onCopyOrderId = async () => {
-        try {
-            await navigator.clipboard.writeText(orderId);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1200);
-        } catch {}
-    };
+    const customerName    = orderData?.customerName || '—';
+    const totalAmount     = orderData?.totalAmount ?? 0;
+    const paidAmount      = orderData?.paidAmount ?? 0;
+    const dueAmount       = orderData?.dueAmount ?? Math.max(totalAmount - paidAmount, 0);
+    const items           = (orderData?.items && orderData.items.length > 0) ? orderData.items : [{ itemName: 'Item', count: 1 }];
+    const totalUnits      = items.reduce((s, it) => s + (Number(it.count) || 0), 0) || 1;
 
     return (
         <main className={styles.page}>
-            {/* Print CSS */}
+            {/* Screen + Print CSS */}
             <style jsx global>{`
-                @media print {
-                    /* QR-only print mode */
-                    body.print-qr * { visibility: hidden !important; }
-                    body.print-qr #qrPrintArea, body.print-qr #qrPrintArea * { visibility: visible !important; }
-                    body.print-qr #qrPrintArea {
-                        position: fixed; inset: 0; display: grid; place-items: center; background: #fff; padding: 24px; gap: 10px;
-                    }
-                    body.print-qr #qrPrintArea .no-qr-print { display: none !important; }
-                    body.print-qr #qrPrintArea .qr-only { display: block !important; width: 220px; height: 220px; object-fit: contain; }
-
-                    /* Receipt print mode */
-                    body.print-receipt * { visibility: hidden !important; }
-                    body.print-receipt #receiptPrintArea, body.print-receipt #receiptPrintArea * { visibility: visible !important; }
-                    body.print-receipt #receiptPrintArea {
-                        position: fixed; inset: 0; overflow: auto; background: #fff; padding: 24px;
-                    }
-                    /* Hide helpers when printing unless made visible above */
-                    .no-print { display: none !important; }
-                }
-                /* Screen helpers */
                 .print-only { display: none; }
-                #qrPrintArea .qr-only { display: none; } /* only show in QR print */
+                .screen-only { display: block; }
+                @media print {
+                    /* Use full page; disable browser headers/footers in print dialog to remove date/URL */
+                    @page { size: A4; margin: 0; }
+                    html, body, #__next { margin: 0 !important; padding: 0 !important; }
+                    html, body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+                    /* Hide screen-only UI, allow print-only blocks */
+                    .screen-only { display: none !important; }
+                    .print-only  { display: block !important; }
+
+                    /* Print ONLY the receipt by default */
+                    body:not(.print-qr) * { visibility: hidden !important; }
+                    body:not(.print-qr) #receiptPrintArea,
+                    body:not(.print-qr) #receiptPrintArea * { visibility: visible !important; }
+
+                    /* Top aligned: 10mm from top of the page */
+                    body:not(.print-qr) #receiptPrintArea {
+                        position: fixed !important;   /* lock position relative to page, not flow */
+                        top: 10mm;                    /* <- exactly 10mm from top */
+                        left: 0;
+                        right: 0;
+                        width: 210mm;                 /* A4 width */
+                        max-width: 210mm;
+                        margin: 0 auto !important;
+                        padding: 0 8mm 10mm !important; /* no extra top padding, keep sides/bottom */
+                        box-sizing: border-box;
+                        font-size: 93%;                 /* small scale to help fit single page */
+                        overflow: hidden;               /* avoid first-child margin collapse */
+                    }
+                    /* Ensure first child doesn't push down */
+                    body:not(.print-qr) #receiptPrintArea > *:first-child {
+                        margin-top: 0 !important;
+                        padding-top: 0 !important;
+                    }
+                    body:not(.print-qr) #receiptPrintArea .receipt-header {
+                        margin-top: 0 !important;
+                        padding-top: 0 !important;
+                    }
+
+                    /* Avoid page breaks inside critical sections */
+                    #receiptPrintArea,
+                    #receiptPrintArea .receipt-header,
+                    #receiptPrintArea .meta-row,
+                    #receiptPrintArea .table,
+                    #receiptPrintArea .table-head,
+                    #receiptPrintArea .table-row,
+                    #receiptPrintArea .totals,
+                    #receiptPrintArea .thanks,
+                    #receiptPrintArea .notes {
+                        break-inside: avoid !important;
+                        page-break-inside: avoid !important;
+                    }
+
+                    /* Hide the on-screen QR preview in print */
+                    #screenQR { display: none !important; }
+
+                    /* If you had a centered print QR block, hide it now (we use top-right mini QR) */
+                    #receiptPrintArea .receipt-qr-print-only { display: none !important; }
+
+                    /* Top-right mini QR next to Order # (print-only) */
+                    #receiptPrintArea .meta-right {
+                        display: flex !important;
+                        flex-direction: column;
+                        align-items: flex-end;
+                        gap: 3mm;
+                    }
+                    #receiptPrintArea .meta-right .order-line { white-space: nowrap; }
+                    #receiptPrintArea .meta-right .qr-mini {
+                        display: block;
+                        width: 28mm;
+                        height: 28mm;
+                        object-fit: contain;
+                        border: 1px solid #e5e7eb;
+                        border-radius: 4px;
+                    }
+
+                    /* QR-only mode (Print QR button) */
+                    body.print-qr * { visibility: hidden !important; }
+                    body.print-qr #qrPrintCard,
+                    body.print-qr #qrPrintCard * { visibility: visible !important; }
+                    body.print-qr #qrPrintCard {
+                        position: fixed;
+                        inset: 0;
+                        display: grid !important;
+                        place-items: center;
+                        background: #fff;
+                        margin: 0;
+                        padding: 0;
+                    }
+                }
+                /* Receipt layout */
+                #receiptPrintArea .receipt-header { text-align: center; margin-bottom: 10px; }
+                #receiptPrintArea .receipt-header .copy { font-weight: 800; color: #111827; }
+                #receiptPrintArea .receipt-header .shop { font-weight: 700; color: #111827; }
+
+                #receiptPrintArea .meta-row {
+                    display: grid; grid-template-columns: 1fr auto; align-items: start; gap: 12px;
+                    margin: 12px 0; color: #111827; font-weight: 700;
+                }
+                #receiptPrintArea .meta-left div { margin-bottom: 4px; }
+                #receiptPrintArea .meta-right { text-align: right; white-space: nowrap; }
+
+                #receiptPrintArea .table { border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; margin-top: 8px; }
+                #receiptPrintArea .table-head {
+                    display: grid; grid-template-columns: 40px 1fr 160px 100px;
+                    background: #f3f4f6; padding: 8px 10px; font-weight: 800; color: #374151;
+                }
+                #receiptPrintArea .table-row {
+                    display: grid; grid-template-columns: 40px 1fr 160px 100px;
+                    padding: 8px 10px; border-top: 1px solid #e5e7eb;
+                }
+                #receiptPrintArea .totals { margin-top: 12px; display: grid; gap: 6px; color: #111827; }
+                #receiptPrintArea .totals .row { display: flex; justify-content: space-between; font-weight: 800; }
+
+                /* PRINT-ONLY QR inside receipt (no dark band) */
+                #receiptPrintArea .receipt-qr-print-only {
+                    text-align: center;
+                    margin: 12px 0;
+                }
+                #receiptPrintArea .receipt-qr-print-only img {
+                    border: 1px solid #e5e7eb;
+                    border-radius: 6px;
+                }
+
+                #receiptPrintArea .divider { border-top: 1px solid #e5e7eb; margin: 10px 0; }
+                #receiptPrintArea .thanks { text-align: center; font-weight: 800; margin-top: 6px; }
+                #receiptPrintArea .notes { margin-top: 6px; padding-left: 16px; color: #6b7280; font-size: 12px; line-height: 1.5; }
+
+                /* QR print card (for Print QR) */
+                #qrPrintCard { display: none; } /* hidden on screen */
+                #qrPrintCard .card {
+                    background: #fff;
+                    border: 1px solid #e5e7eb;
+                    border-radius: 12px;
+                    box-shadow: 0 0 0 3px #0f172a; /* dark outline */
+                    padding: 12px;
+                    display: grid;
+                    place-items: center;
+                    width: 260px;
+                }
+                #qrPrintCard .qr-img {
+                    border-radius: 8px;
+                    border: 1px solid #e5e7eb;
+                    width: 200px;
+                    height: 200px;
+                    object-fit: contain;
+                    background: #fff;
+                }
+                #qrPrintCard .caption {
+                    margin-top: 10px;
+                    font-weight: 800;
+                    color: #0f172a;
+                    text-align: center;
+                }
+                #qrPrintCard .caption .id {
+                    color: #1e3a8a;
+                    font-weight: 800;
+                }
             `}</style>
 
+            {/* Screen header */}
             <header className={styles.header}>
                 <div className={`${styles.container} ${styles.headerRow}`} style={{ justifyContent: 'center' }}>
                     <h1 className={styles.title} style={{ margin: 0, textAlign: 'center' }}>Create New Order</h1>
                 </div>
             </header>
 
+            {/* Screen content (web view) */}
             <section className={`${styles.container} ${styles.formSection}`} style={{ textAlign: 'center', maxWidth: 520, marginInline: 'auto' }}>
                 <div style={{ marginTop: 12, marginBottom: 6, fontWeight: 800, color: '#111827' }}>Success!</div>
                 <div style={{ color: '#6b7280', marginBottom: 12 }}>Thank you! Your order has been successfully placed.</div>
 
-                {/* Order ID pill (center) */}
+                {/* Order ID pill */}
                 <div
                     style={{
-                        display: 'flex',
-                        justifyContent: 'center',
-                        alignItems: 'center',
-                        gap: 8,
-                        padding: '10px 14px',
-                        border: '1px solid #E5E7EB',
-                        borderRadius: 12,
-                        background: '#fff',
-                        marginBottom: 12,
-                        boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
-                        width: '100%',
-                        maxWidth: 520,
-                        marginInline: 'auto',
-                        textAlign: 'center',
+                        display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8,
+                        padding: '10px 14px', border: '1px solid #E5E7EB', borderRadius: 12, background: '#fff',
+                        marginBottom: 12, boxShadow: '0 1px 2px rgba(0,0,0,0.04)', width: '100%', maxWidth: 520
                     }}
-                    className="no-qr-print"
                 >
                     <span style={{ fontWeight: 800, color: '#111827' }}>Order ID:</span>
-                    <button
-                        type="button"
-                        onClick={onCopyOrderId}
-                        title="Click to copy"
-                        style={{
-                            appearance: 'none',
-                            border: 0,
-                            background: 'transparent',
-                            color: '#2563EB',
-                            textDecoration: 'underline',
-                            cursor: 'pointer',
-                            fontWeight: 800
-                        }}
-                    >
-                        {orderId}
-                    </button>
-                    {copied && <span style={{ color: '#10B981', fontWeight: 700, fontSize: 12 }}>Copied!</span>}
+                    <span style={{ color: '#2563EB', textDecoration: 'underline', fontWeight: 800 }}>{orderId}</span>
                 </div>
 
-                {/* QR print area */}
-                <div id="qrPrintArea" style={{ display: 'grid', placeItems: 'center', gap: 10, marginBottom: 14 }}>
-                    {/* Screen-only + general view */}
-                    <div className="no-qr-print" style={{
-                        width: 216,
-                        height: 216,
-                        display: 'grid',
-                        placeItems: 'center',
-                        borderRadius: 12,
-                        border: '1px solid #E5E7EB',
-                        background: '#F9FAFB',
-                        boxShadow: '0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04)'
-                    }}>
-                        <div style={{ minHeight: 128 }}>
-                            {loading && <div style={{ color: '#6b7280' }}>Generating QR… {attempt ? `(attempt ${attempt})` : ''}</div>}
-                            {!loading && (
-                                <img
-                                    src={qrSrc || fallbackQrUrl}
-                                    alt="Order QR"
-                                    width={180}
-                                    height={180}
-                                    style={{ borderRadius: 8, border: '1px solid #e5e7eb' }}
-                                />
-                            )}
-                            {!loading && !qrSrc && (
-                                <div style={{ color: '#b45309', fontWeight: 700, marginTop: 6 }}>{qrErr || 'Failed to load QR'} • showing fallback QR</div>
-                            )}
-                        </div>
+                {/* On-screen QR preview (never printed) */}
+                <div id="screenQR" className="screen-only" style={{
+                    width: 260, margin: '0 auto 12px', padding: 12, borderRadius: 12,
+                    border: '1px solid #e5e7eb', background: '#f9fafb', boxShadow: '0 1px 2px rgba(0,0,0,.06)'
+                }}>
+                    <div style={{ background: '#fff', borderRadius: 8, display: 'grid', placeItems: 'center', padding: 10 }}>
+                        {!loading && <img src={qrSrc || fallbackQrUrl} alt="Order QR" width={200} height={200} style={{ borderRadius: 6, border: '1px solid #e5e7eb' }} />}
+                        {loading && <div style={{ color: '#6b7280' }}>Generating QR… {attempt ? `(attempt ${attempt})` : ''}</div>}
                     </div>
-
-                    {/* Labels under QR (screen) */}
-                    <div className="no-qr-print" style={{ fontWeight: 800, color: '#111827', marginTop: 6 }}>Customer Copy</div>
-                    <div className="no-qr-print" style={{ color: '#111827', fontWeight: 700 }}>{shopName}</div>
-
-                    {/* QR-only element for printing the QR image alone */}
-                    {!loading && (
-                        <img
-                            className="qr-only"
-                            src={qrSrc || fallbackQrUrl}
-                            alt="Order QR"
-                        />
-                    )}
                 </div>
 
-                {/* Receipt print area */}
+                {/* QR print card (used ONLY when clicking Print QR) */}
+                <div id="qrPrintCard" aria-hidden="true">
+                    <div className="qr-card">
+                        {!loading && (
+                            <img
+                                className="qr-img"
+                                src={qrSrc || fallbackQrUrl}
+                                alt="Order QR"
+                            />
+                        )}
+                        {loading && <div style={{ color: '#6b7280' }}>Generating QR…</div>}
+
+                        {/* Caption under QR */}
+                        {!loading && (
+                            <div className="caption">
+                                Order ID: <span className="id">{orderId}</span>
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                {/* Receipt (second design) — prints by default */}
                 <div id="receiptPrintArea" style={{ textAlign: 'left', maxWidth: 520, margin: '0 auto', background: '#fff' }}>
-                    <div className="print-only" style={{ textAlign: 'center', fontWeight: 800, marginBottom: 4 }}>
-                        Customer Copy
-                    </div>
-                    <div className="print-only" style={{ textAlign: 'center', fontWeight: 700, marginBottom: 10 }}>
-                        {shopName}
+                    <div className="receipt-header">
+                        <div className="copy">Customer Copy</div>
+                        <div className="shop">{shopName}</div>
                     </div>
 
-                    {/* Meta */}
-                    <div style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'flex-end',
-                        marginBottom: 10,
-                        color: '#111827',
-                        fontWeight: 700
-                    }}>
-                        <div>
-                            <div>
+                    <div className="meta-row">
+                        {/* LEFT */}
+                        <div className="meta-left">
+                            {/* Order chip */}
+                            <div className="chip chip-order">
+                                <strong>Order ID:</strong> {orderId}
+                            </div>
+
+                            {/* Date chip */}
+                            <div className="chip chip-date">
                                 <strong>Date:</strong>{' '}
                                 {(() => {
                                     try {
-                                        return new Date(orderDateIso + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
+                                        return new Date(
+                                            (normalizeIso(orderData?.orderDate) || orderDateIso) + 'T00:00:00'
+                                        ).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
                                     } catch {
                                         return '—';
                                     }
                                 })()}
                             </div>
-                            <div><strong>Cust. Name:</strong> {customerName}</div>
-                            {orderData?.customerPhone && <div><strong>Phone:</strong> {orderData.customerPhone}</div>}
+
+                            {/* Labeled Name and Phone, one per line */}
+                            {orderData?.customerName && (
+                                <div className="meta-line"><strong>Customer Name:</strong> {orderData.customerName}</div>
+                            )}
+                            {orderData?.customerPhone && (
+                                <div className="meta-line"><strong>Phone:</strong> {orderData.customerPhone}</div>
+                            )}
                         </div>
-                        <div style={{ whiteSpace: 'nowrap' }}>
-                            <div><strong>Order #:</strong> {orderId}</div>
+
+                        {/* RIGHT */}
+                        <div className="meta-right">
+                            {/* Print-only mini QR with slim dark bars above & below */}
+                            {!loading && (
+                                <div className="qr-mini-wrap print-only">
+                                    <div className="qr-band" />
+                                    <img className="qr-mini" src={qrSrc || fallbackQrUrl} alt="Order QR" width={96} height={96} />
+                                    <div className="qr-band" />
+                                </div>
+                            )}
                         </div>
                     </div>
 
-                    {/* Items table */}
-                    <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden', marginTop: 8 }}>
-                        <div style={{
-                            display: 'grid',
-                            gridTemplateColumns: '40px 1fr 160px 100px',
-                            background: '#f3f4f6',
-                            padding: '8px 10px',
-                            fontWeight: 800,
-                            color: '#374151'
-                        }}>
+                    <div className="table">
+                        <div className="table-head">
                             <div>#</div>
                             <div style={{ fontSize: 13 }}>Item</div>
                             <div style={{ fontSize: 13 }}>Exp. Delivery Dt</div>
@@ -446,17 +496,9 @@ export default function SuccessClient() {
                             const count = Number(it.count) || 1;
                             const itemPrice = (totalAmount / (totalUnits || 1)) * count;
                             return (
-                                <div key={idx} style={{
-                                    display: 'grid',
-                                    gridTemplateColumns: '40px 1fr 160px 100px',
-                                    padding: '8px 10px',
-                                    borderTop: '1px solid #e5e7eb'
-                                }}>
+                                <div key={idx} className="table-row">
                                     <div>{idx + 1}</div>
-                                    <div style={{ fontSize: 13 }}>
-                                        {it.itemName || 'Item'}
-                                        {count > 1 ? ` x${count}` : ''}
-                                    </div>
+                                    <div style={{ fontSize: 13 }}>{it.itemName || 'Item'}{count > 1 ? ` x${count}` : ''}</div>
                                     <div style={{ fontSize: 13 }}>{deliveryDateIso}</div>
                                     <div style={{ textAlign: 'right' }}>{fMoney(itemPrice)}</div>
                                 </div>
@@ -464,27 +506,20 @@ export default function SuccessClient() {
                         })}
                     </div>
 
-                    {/* Totals */}
-                    <div style={{ marginTop: 12, display: 'grid', gap: 6, color: '#111827' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                            <div style={{ fontWeight: 800 }}>Total Amount:</div>
-                            <div style={{ fontWeight: 800 }}>{fMoney(totalAmount)}</div>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                            <div style={{ fontWeight: 800 }}>Amount Paid:</div>
-                            <div style={{ fontWeight: 800 }}>{fMoney(paidAmount)}</div>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                            <div style={{ fontWeight: 800 }}>Balance Due:</div>
-                            <div style={{ fontWeight: 800 }}>{fMoney(dueAmount)}</div>
-                        </div>
+                    <div className="totals">
+                        <div className="row"><div>Total Amount:</div><div>{fMoney(totalAmount)}</div></div>
+                        <div className="row"><div>Amount Paid:</div><div>{fMoney(paidAmount)}</div></div>
+                        <div className="row"><div>Balance Due:</div><div>{fMoney(dueAmount)}</div></div>
                     </div>
 
-                    {/* Footer note */}
-                    <div style={{ marginTop: 16, borderTop: '1px solid #e5e7eb', paddingTop: 10, textAlign: 'center', fontWeight: 800 }}>
-                        Thank you for your business!
+                    {/* PRINT-ONLY QR (no dark background) */}
+                    <div className="receipt-qr-print-only print-only">
+                        {!loading && <img src={qrSrc || fallbackQrUrl} alt="Order QR" width={160} height={160} />}
                     </div>
-                    <ul style={{ marginTop: 8, paddingLeft: 16, color: '#6b7280', fontSize: 12, lineHeight: 1.5 }}>
+
+                    <div className="divider" />
+                    <div className="thanks">Thank you for your business!</div>
+                    <ul className="notes">
                         <li>Once confirmed, any advance amount paid towards the order cannot be refunded.</li>
                         <li>Goods once sold will not be taken back.</li>
                         <li>We do not give guarantee for colors. We advise you do Dry Cleaning only.</li>
@@ -493,7 +528,7 @@ export default function SuccessClient() {
                     </ul>
                 </div>
 
-                {/* Buttons (pill style) */}
+                {/* Buttons */}
                 <div style={{ display: 'grid', gap: 10, marginTop: 14 }}>
                     <button
                         type="button"
