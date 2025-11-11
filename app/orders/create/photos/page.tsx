@@ -1,18 +1,17 @@
-'use client'
+'use client';
 
-import React, { useEffect, useMemo, useRef, useState, useId, type ChangeEvent } from 'react'
-import Image from 'next/image'
-import { useRouter } from 'next/navigation'
-import { useCreateOrder } from '../_store'
-import styles from '../CreateOrder.module.css'
+import React, { useEffect, useMemo, useRef, useState, useId, type ChangeEvent } from 'react';
+import Image from 'next/image';
+import { useRouter } from 'next/navigation';
+import { useCreateOrder } from '../_store';
+import styles from '../CreateOrder.module.css';
+import { api, API_ORIGIN } from '@/lib/apiBase'; // unified API helper
 
-type PhotoKey = 'orderCloth' | 'designPhoto' | 'patternPhoto' | 'measurementCloth' | 'designSketch'
-
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8083'
+type PhotoKey = 'orderCloth' | 'designPhoto' | 'patternPhoto' | 'measurementCloth' | 'designSketch';
 
 // Android helper (for gallery hint)
 const isAndroid = () =>
-    typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
+    typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
 
 // Map photo key -> imageName the upload API expects
 const imageNameMap: Record<Exclude<PhotoKey, 'designSketch'> | 'designSketch', string> = {
@@ -21,16 +20,16 @@ const imageNameMap: Record<Exclude<PhotoKey, 'designSketch'> | 'designSketch', s
     patternPhoto: 'pattern',
     measurementCloth: 'measurement',
     designSketch: 'design-sketch',
-}
+};
 
 /* Token helpers */
 function getCookie(name: string) {
-    if (typeof document === 'undefined') return null
-    const m = document.cookie.match(new RegExp('(^|; )' + name + '=([^;]*)'))
-    return m ? decodeURIComponent(m[2]) : null
+    if (typeof document === 'undefined') return null;
+    const m = document.cookie.match(new RegExp('(^|; )' + name + '=([^;]*)'));
+    return m ? decodeURIComponent(m[2]) : null;
 }
 function getAuthToken(): string | null {
-    if (typeof window === 'undefined') return null
+    if (typeof window === 'undefined') return null;
     return (
         sessionStorage.getItem('auth.accessToken') ||
         localStorage.getItem('auth.accessToken') ||
@@ -39,143 +38,153 @@ function getAuthToken(): string | null {
         getCookie('access_token') ||
         getCookie('token') ||
         null
-    )
+    );
 }
 
 /* Convert file -> data URL (for preview) */
 function fileToDataUrl(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onload = () => resolve(String(reader.result))
-        reader.onerror = reject
-        reader.readAsDataURL(file)
-    })
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+    });
 }
 
 /* Extract base64 from data URL */
 function dataUrlToBase64(dataUrl: string) {
-    const i = dataUrl.indexOf(',')
-    return i >= 0 ? dataUrl.slice(i + 1) : dataUrl
+    const i = dataUrl.indexOf(',');
+    return i >= 0 ? dataUrl.slice(i + 1) : dataUrl;
 }
 
-/* Call your upload-base64 API, return server image URL */
+/* Call your upload-base64 API, return ABSOLUTE image URL */
 async function uploadBase64(photoBase64: string, imageName: string, token: string) {
-    const res = await fetch(`${API_BASE}/api/photos/upload-base64`, {
+    const res = await fetch(api('/api/photos/upload-base64'), {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ photo: photoBase64, imageName }),
-    })
-    if (res.status === 401) throw new Error('Unauthorized. Please login again.')
+    });
+
+    if (res.status === 401) throw new Error('Unauthorized. Please login again.');
     if (!res.ok) {
-        const text = await res.text().catch(() => '')
-        throw new Error(text || `Upload failed (${res.status})`)
+        const text = await res.text().catch(() => '');
+        throw new Error(text || `Upload failed (${res.status})`);
     }
-    const data = await res.json().catch(() => ({} as any))
-    // Try common keys for image URL
-    const url =
+
+    const data = (await res.json().catch(() => ({} as any))) as any;
+    const rawUrl =
         data?.data?.url ||
         data?.data?.imageUrl ||
         data?.imageUrl ||
         data?.url ||
         data?.path ||
-        data?.fileUrl
-    if (!url) throw new Error('Upload succeeded but response had no image URL')
-    return String(url)
+        data?.fileUrl;
+
+    if (!rawUrl) throw new Error('Upload succeeded but response had no image URL');
+
+    // Ensure absolute URL
+    const absolute = String(rawUrl).startsWith('http')
+        ? String(rawUrl)
+        : new URL(String(rawUrl).startsWith('/') ? String(rawUrl) : `/${String(rawUrl)}`, API_ORIGIN).toString();
+
+    return absolute;
 }
 
 export default function PhotoCapturePage() {
-    const router = useRouter()
-    const { state, setState } = useCreateOrder()
+    const router = useRouter();
+    const { state, setState } = useCreateOrder();
 
     // Guard: require customer + item
     useEffect(() => {
-        const qs = state.shopId ? `?shopId=${state.shopId}` : ''
+        const qs = state.shopId ? `?shopId=${state.shopId}` : '';
         if (!state.phone || !state.name) {
-            router.replace(`/orders/create${qs}`)
-            return
+            router.replace(`/orders/create${qs}`);
+            return;
         }
         if (!state.itemId) {
-            router.replace(`/orders/create/items${qs}`)
+            router.replace(`/orders/create/items${qs}`);
         }
-    }, [router, state.phone, state.name, state.itemId, state.shopId])
+    }, [router, state.phone, state.name, state.itemId, state.shopId]);
 
-    const qs = useMemo(() => (state.shopId ? `?shopId=${state.shopId}` : ''), [state.shopId])
+    const qs = useMemo(() => (state.shopId ? `?shopId=${state.shopId}` : ''), [state.shopId]);
 
-    const photos = state.photos ?? {}                  // data URLs for quick preview
-    const photoUrls = state.photoUrls ?? {}            // server URLs (API response)
-    const clothCardRef = useRef<HTMLDivElement | null>(null)
+    const photos = state.photos ?? {}; // data URLs for quick preview
+    const photoUrls = state.photoUrls ?? {}; // server URLs (API response)
+    const clothCardRef = useRef<HTMLDivElement | null>(null);
 
-    const [error, setError] = useState<string | null>(null)
-    const [busyKey, setBusyKey] = useState<PhotoKey | null>(null)  // show uploading state per card
+    const [error, setError] = useState<string | null>(null);
+    const [busyKey, setBusyKey] = useState<PhotoKey | null>(null); // show uploading state per card
 
-    const onBack = () => router.back()
+    const onBack = () => router.back();
 
     const onNext = () => {
         // Require server URL for cloth photo
         if (!photoUrls.orderCloth) {
-            setError('Order Cloth Photo is required')
-            clothCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-            return
+            setError('Order Cloth Photo is required');
+            clothCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            return;
         }
-        setError(null)
-        router.push(`/orders/create/extras${qs}`)
-    }
+        setError(null);
+        router.push(`/orders/create/extras${qs}`);
+    };
 
     function setPreviewAndUrl(key: PhotoKey, previewUrl?: string, serverUrl?: string) {
-        setState(s => ({
+        setState((s) => ({
             ...s,
             photos: { ...(s.photos ?? {}), [key]: previewUrl },
             photoUrls: { ...(s.photoUrls ?? {}), [key]: serverUrl },
-        }))
+        }));
     }
 
     async function handlePick(
         key: Extract<PhotoKey, 'orderCloth' | 'designPhoto' | 'patternPhoto' | 'measurementCloth'>,
         e: ChangeEvent<HTMLInputElement>
     ) {
-        const file = e.target.files?.[0]
-        if (!file) return
-        const token = getAuthToken()
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const token = getAuthToken();
         if (!token) {
-            setError('Your session expired. Please log in again.')
-            return
+            setError('Your session expired. Please log in again.');
+            return;
         }
 
         try {
-            setBusyKey(key)
+            setBusyKey(key);
             // 1) show preview immediately
-            const dataUrl = await fileToDataUrl(file)
-            setPreviewAndUrl(key, dataUrl, photoUrls[key])
+            const dataUrl = await fileToDataUrl(file);
+            setPreviewAndUrl(key, dataUrl, photoUrls[key]);
 
             // 2) upload base64 to API and persist returned URL
-            const base64 = dataUrlToBase64(dataUrl)
-            const serverUrl = await uploadBase64(base64, imageNameMap[key], token)
-            setPreviewAndUrl(key, dataUrl, serverUrl)
-            setError(null)
+            const base64 = dataUrlToBase64(dataUrl);
+            const serverUrl = await uploadBase64(base64, imageNameMap[key], token);
+            setPreviewAndUrl(key, dataUrl, serverUrl);
+            setError(null);
         } catch (err: any) {
-            console.error('Upload error', err)
-            setError(err?.message || 'Failed to upload image')
+            console.error('Upload error', err);
+            setError(err?.message || 'Failed to upload image');
             // if failed, keep preview but remove server URL for this key
-            setPreviewAndUrl(key, photos[key], undefined)
+            setPreviewAndUrl(key, photos[key], undefined);
         } finally {
-            setBusyKey(null)
-            e.currentTarget.value = '' // allow re-selection of same file
+            setBusyKey(null);
+            e.currentTarget.value = ''; // allow re-selection of same file
         }
     }
 
     const goDraw = () => {
-        router.push(`/orders/create/photos/draw${qs}`)
-    }
+        router.push(`/orders/create/photos/draw${qs}`);
+    };
 
     return (
         <main className={styles.page}>
             {/* Header */}
             <header className={styles.header}>
                 <div className={`${styles.container} ${styles.headerRow}`}>
-                    <button type="button" className={styles.iconBack} onClick={onBack} aria-label="Back">←</button>
+                    <button type="button" className={styles.iconBack} onClick={onBack} aria-label="Back">
+                        ←
+                    </button>
                     <h1 className={styles.title}>Create New Order</h1>
                     <div className={styles.headerRight} />
                 </div>
@@ -200,7 +209,11 @@ export default function PhotoCapturePage() {
                 {/* Order Cloth Photo (REQUIRED) */}
                 <PhotoCard
                     ref={clothCardRef}
-                    title={<>Order Cloth Photo <span className={styles.req}>*</span></>}
+                    title={
+                        <>
+                            Order Cloth Photo <span className={styles.req}>*</span>
+                        </>
+                    }
                     desc="Capture the cloth that will be used for this order."
                     preview={photos.orderCloth}
                     onClear={() => setPreviewAndUrl('orderCloth', undefined, undefined)}
@@ -212,9 +225,7 @@ export default function PhotoCapturePage() {
                         <CaptureMini label="Capture" onPick={(e) => handlePick('orderCloth', e)} />
                         <UploadMini label="Upload" onPick={(e) => handlePick('orderCloth', e)} />
                     </div>
-                    {!!error && !photoUrls.orderCloth && (
-                        <div className={styles.error} style={{ marginTop: 10 }}>{error}</div>
-                    )}
+                    {!!error && !photoUrls.orderCloth && <div className={styles.error} style={{ marginTop: 10 }}>{error}</div>}
                 </PhotoCard>
 
                 {/* Design Drawing */}
@@ -223,8 +234,8 @@ export default function PhotoCapturePage() {
                     desc="Draw or capture your sketch"
                     preview={photos.designSketch || photos.designPhoto}
                     onClear={() => {
-                        setPreviewAndUrl('designSketch', undefined, undefined)
-                        setPreviewAndUrl('designPhoto', undefined, undefined)
+                        setPreviewAndUrl('designSketch', undefined, undefined);
+                        setPreviewAndUrl('designPhoto', undefined, undefined);
                     }}
                     uploading={busyKey === 'designPhoto'}
                     serverUrl={photoUrls.designSketch || photoUrls.designPhoto}
@@ -271,25 +282,29 @@ export default function PhotoCapturePage() {
 
             {/* Footer */}
             <footer className={`${styles.footer} ${styles.container}`}>
-                <button type="button" className={styles.secondary} onClick={onBack}>‹ Back</button>
-                <button type="button" className={styles.primary} onClick={onNext}>Next ›</button>
+                <button type="button" className={styles.secondary} onClick={onBack}>
+                    ‹ Back
+                </button>
+                <button type="button" className={styles.primary} onClick={onNext}>
+                    Next ›
+                </button>
             </footer>
         </main>
-    )
+    );
 }
 
 /* --- Reusable blocks --- */
 
 type PhotoCardProps = {
-    title: React.ReactNode
-    desc: string
-    preview?: string
-    serverUrl?: string
-    onClear: () => void
-    children: React.ReactNode
-    highlightError?: boolean
-    uploading?: boolean
-}
+    title: React.ReactNode;
+    desc: string;
+    preview?: string;
+    serverUrl?: string;
+    onClear: () => void;
+    children: React.ReactNode;
+    highlightError?: boolean;
+    uploading?: boolean;
+};
 const PhotoCard = React.forwardRef<HTMLDivElement, PhotoCardProps>(function PhotoCard(
     { title, desc, preview, serverUrl, onClear, children, highlightError, uploading },
     ref
@@ -319,57 +334,40 @@ const PhotoCard = React.forwardRef<HTMLDivElement, PhotoCardProps>(function Phot
                         className={styles.previewImg}
                         unoptimized
                     />
-                    <button type="button" className={styles.clearBtn} onClick={onClear}>Remove</button>
+                    <button type="button" className={styles.clearBtn} onClick={onClear}>
+                        Remove
+                    </button>
                 </div>
             )}
 
             {children}
         </div>
-    )
-})
+    );
+});
 
-function CaptureMini({
-                         label,
-                         onPick,
-                     }: {
-    label: string
-    onPick: (e: ChangeEvent<HTMLInputElement>) => void
-}) {
-    const inputId = useId()
+function CaptureMini({ label, onPick }: { label: string; onPick: (e: ChangeEvent<HTMLInputElement>) => void }) {
+    const inputId = useId();
     return (
         <div className={styles.ctaWrap}>
             <label htmlFor={inputId} className={`${styles.ctaBtn} ${styles.ctaPrimary}`}>
                 <CameraIcon />
                 <span>{label}</span>
             </label>
-            <input
-                id={inputId}
-                type="file"
-                accept="image/*"
-                capture="environment"   // opens camera
-                onChange={onPick}
-                className={styles.hiddenInput}
-            />
+            <input id={inputId} type="file" accept="image/*" capture="environment" onChange={onPick} className={styles.hiddenInput} />
         </div>
-    )
+    );
 }
 
-function UploadMini({
-                        label,
-                        onPick,
-                    }: {
-    label: string
-    onPick: (e: ChangeEvent<HTMLInputElement>) => void
-}) {
-    const inputId = useId()
-    const inputRef = useRef<HTMLInputElement | null>(null)
+function UploadMini({ label, onPick }: { label: string; onPick: (e: ChangeEvent<HTMLInputElement>) => void }) {
+    const inputId = useId();
+    const inputRef = useRef<HTMLInputElement | null>(null);
 
     // Android hint for gallery-only (non-standard; helps many browsers)
     useEffect(() => {
         if (isAndroid() && inputRef.current) {
-            inputRef.current.setAttribute('capture', 'filesystem')
+            inputRef.current.setAttribute('capture', 'filesystem');
         }
-    }, [])
+    }, []);
 
     return (
         <div className={styles.ctaWrap}>
@@ -377,16 +375,9 @@ function UploadMini({
                 <UploadIcon />
                 <span>{label}</span>
             </label>
-            <input
-                ref={inputRef}
-                id={inputId}
-                type="file"
-                accept="image/*"        // no capture -> gallery/file picker
-                onChange={onPick}
-                className={styles.hiddenInput}
-            />
+            <input ref={inputRef} id={inputId} type="file" accept="image/*" onChange={onPick} className={styles.hiddenInput} />
         </div>
-    )
+    );
 }
 
 function ActionPill({ label, onClick }: { label: string; onClick: () => void }) {
@@ -395,30 +386,30 @@ function ActionPill({ label, onClick }: { label: string; onClick: () => void }) 
             <PencilIcon />
             <span>{label}</span>
         </button>
-    )
+    );
 }
 
 function CameraIcon() {
     return (
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M4 7h3l2-3h6l2 3h3a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z" stroke="currentColor" strokeWidth="1.6"/>
-            <circle cx="12" cy="13" r="4" stroke="currentColor" strokeWidth="1.6"/>
+            <path d="M4 7h3l2-3h6l2 3h3a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z" stroke="currentColor" strokeWidth="1.6" />
+            <circle cx="12" cy="13" r="4" stroke="currentColor" strokeWidth="1.6" />
         </svg>
-    )
+    );
 }
 function UploadIcon() {
     return (
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M12 16V4m0 0 4 4M12 4 8 8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
-            <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/>
+            <path d="M12 16V4m0 0 4 4M12 4 8 8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
         </svg>
-    )
+    );
 }
 function PencilIcon() {
     return (
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25Z" stroke="currentColor" strokeWidth="1.6"/>
-            <path d="M14.06 6.19 16.88 3.37 20.63 7.12 17.81 9.94" stroke="currentColor" strokeWidth="1.6"/>
+            <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25Z" stroke="currentColor" strokeWidth="1.6" />
+            <path d="M14.06 6.19 16.88 3.37 20.63 7.12 17.81 9.94" stroke="currentColor" strokeWidth="1.6" />
         </svg>
-    )
+    );
 }

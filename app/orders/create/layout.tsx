@@ -1,7 +1,9 @@
-'use client'
-
-import { CreateOrderProvider } from './_store'
-
+import { Suspense } from 'react';
+import CreateProviders from './Providers';
 export default function CreateOrderLayout({ children }: { children: React.ReactNode }) {
-    return <CreateOrderProvider>{children}</CreateOrderProvider>
+    return (
+        <Suspense fallback={<main style={{ padding: 16 }}>Loading…</main>}>
+            <CreateProviders>{children}</CreateProviders>
+        </Suspense>
+    );
 }
