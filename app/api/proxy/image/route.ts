@@ -1,60 +1,87 @@
 // app/api/proxy/image/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const DEV_DEFAULT = 'http://localhost:8083';
 const PROD_DEFAULT = 'http://109.123.239.27:8083';
-const dev = process.env.NODE_ENV !== 'production';
+const isDev = process.env.NODE_ENV !== 'production';
 
-function sanitizeOrigin(v: string) {
-    let s = (v || '').trim();
-    s = s.replace(/\/+$/, '');
-    s = s.replace(/\/api$/, '');
-    return s;
+function sanitizeOrigin(v?: string) {
+    const s = String(v || '').trim().replace(/\/+$/, '');
+    return s.replace(/\/api$/, '');
 }
 
 const rawOrigin =
     process.env.API_BASE ||
     process.env.NEXT_PUBLIC_TAILORAPP_API ||
-    (dev ? DEV_DEFAULT : PROD_DEFAULT);
+    (isDev ? DEV_DEFAULT : PROD_DEFAULT);
 
 const API_ORIGIN = sanitizeOrigin(rawOrigin);
 
+function normalizeBearer(maybe?: string | null) {
+    if (!maybe) return null;
+    let t = maybe.trim().replace(/^"+|"+$/g, '');
+    if (!t) return null;
+    if (!/^Bearer\s+/i.test(t)) t = `Bearer ${t}`;
+    return t;
+}
+
 export async function GET(req: NextRequest) {
-    const { searchParams } = new URL(req.url);
-    const src = searchParams.get('src');
-    if (!src) return new NextResponse('Missing src', { status: 400 });
-
-    // Option A: use req.cookies (no await)
-    const token =
-        req.cookies.get('access_token')?.value ??
-        (await cookies()).get('access_token')?.value; // Option B: await cookies()
-
-    // Build absolute target URL
-    let target: URL;
     try {
-        target = /^https?:\/\//i.test(src)
-            ? new URL(src)
-            : new URL(src.startsWith('/') ? src : `/${src}`, API_ORIGIN);
-    } catch {
-        return new NextResponse('Invalid src', { status: 400 });
-    }
+        const url = new URL(req.url);
+        const src = url.searchParams.get('src');
+        const bearerParam = url.searchParams.get('b') || url.searchParams.get('bearer'); // optional token via query
+        if (!src) return new NextResponse('Missing src', { status: 400 });
 
-    // Prevent open-proxy: only allow your API origin
-    if (target.origin !== new URL(API_ORIGIN).origin) {
-        return new NextResponse('Forbidden origin', { status: 403 });
-    }
+        // Absolute or relative to API origin
+        let target: URL;
+        try {
+            target = /^https?:\/\//i.test(src)
+                ? new URL(src)
+                : new URL(src.startsWith('/') ? src : `/${src}`, API_ORIGIN);
+        } catch {
+            return new NextResponse('Invalid src', { status: 400 });
+        }
 
-    const headers: Record<string, string> = {};
-    if (token) headers.Authorization = `Bearer ${token}`;
+        // Allow-list the upstream origin to avoid open proxy
+        const allowedOrigin = new URL(API_ORIGIN).origin;
+        if (target.origin !== allowedOrigin) {
+            return new NextResponse('Forbidden origin', { status: 403 });
+        }
 
-    try {
+        // Auth from cookies
+        const tokenCookie =
+            req.cookies.get('access_token')?.value ||
+            req.cookies.get('Authorization')?.value ||
+            req.cookies.get('tb_access_token')?.value ||
+            req.cookies.get('auth_token')?.value ||
+            req.cookies.get('token')?.value ||
+            null;
+
+        const jsid = req.cookies.get('JSESSIONID')?.value;
+        const tbAuth = req.cookies.get('tb_auth')?.value;
+
+        // Also accept Authorization header or query param as fallback
+        const hdrBearer = normalizeBearer(req.headers.get('authorization') || req.headers.get('Authorization'));
+        const qpBearer = normalizeBearer(bearerParam);
+
+        const bearer = normalizeBearer(tokenCookie) || hdrBearer || qpBearer;
+
+        const fwdHeaders = new Headers();
+        fwdHeaders.set('Accept', 'image/*');
+        if (bearer) fwdHeaders.set('Authorization', bearer);
+
+        const cookieParts: string[] = [];
+        if (jsid) cookieParts.push(`JSESSIONID=${jsid}`);
+        if (tbAuth) cookieParts.push(`tb_auth=${tbAuth}`);
+        if (cookieParts.length) fwdHeaders.set('Cookie', cookieParts.join('; '));
+
         const upstream = await fetch(target.toString(), {
-            headers,
+            headers: fwdHeaders,
             cache: 'no-store',
+            redirect: 'follow',
         });
 
         if (!upstream.ok) {
@@ -65,17 +92,19 @@ export async function GET(req: NextRequest) {
         const ct = upstream.headers.get('content-type') ?? 'image/jpeg';
         const cl = upstream.headers.get('content-length') ?? undefined;
         const etag = upstream.headers.get('etag') ?? undefined;
-        const lastModified = upstream.headers.get('last-modified') ?? undefined;
+        const lm = upstream.headers.get('last-modified') ?? undefined;
 
         return new NextResponse(upstream.body, {
-            status: 200,
+            status: upstream.status,
             headers: {
                 'Content-Type': ct,
                 ...(cl ? { 'Content-Length': cl } : {}),
                 ...(etag ? { ETag: etag } : {}),
-                ...(lastModified ? { 'Last-Modified': lastModified } : {}),
+                ...(lm ? { 'Last-Modified': lm } : {}),
                 'Cache-Control': 'public, max-age=300',
                 'Cross-Origin-Resource-Policy': 'cross-origin',
+                Vary: 'Authorization, Cookie',
+                'Content-Disposition': 'inline',
             },
         });
     } catch {

@@ -1,186 +1,245 @@
-// app/orders/delivery-tomorrow/page.tsx
-import { cookies } from 'next/headers';
-import { redirect } from 'next/navigation';
-import Link from 'next/link';
-import Avatar from '@/components/Avatar'; // adjust if you don't use '@'
-import styles from '../Orders.module.css';
-import { api, API_ORIGIN } from '@/lib/apiBase';
+'use client';
 
-export const runtime = 'nodejs';         // Buffer / server fetch
-export const dynamic = 'force-dynamic';  // depends on request cookies
+import React, { useEffect, useMemo, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import OrdersList from '@/components/OrdersList';
+import type { ReadonlyURLSearchParams } from 'next/navigation';
 
-type OrdersResponse = {
-    status: string;
-    message: string;
-    data?: {
-        content: any[];
-        last: boolean;
-        totalPages: number;
-        totalElements: number;
-        size: number;
-        number: number;
-        first: boolean;
-        numberOfElements: number;
-        empty: boolean;
-    };
-    meta?: any;
-};
+const ORIGIN = process.env.NEXT_PUBLIC_API_ORIGIN || 'http://localhost:8083';
+const api = (p: string) => (p.startsWith('http') ? p : `${ORIGIN}${p}`);
 
-function shopIdFromJwt(token?: string): number | undefined {
-    if (!token) return undefined;
-    try {
-        const [, b64] = token.split('.');
-        const json = Buffer.from(
-            b64.replace(/-/g, '+').replace(/_/g, '/'),
-            'base64'
-        ).toString('utf8');
-        const p = JSON.parse(json);
-        return p.shopID ?? p.shopId ?? p.shop_id;
-    } catch {
-        return undefined;
-    }
+type OrderLite = Record<string, any>;
+
+function getCookie(name: string) {
+    if (typeof document === 'undefined') return null;
+    const m = document.cookie.match(new RegExp('(^|; )' + name + '=([^;]*)'));
+    return m ? decodeURIComponent(m[2]) : null;
+}
+function normalizeBearer(t?: string | null) {
+    if (!t) return null;
+    return t.trim().replace(/^Bearer\s+/i, '').replace(/^"+|"+$/g, '');
+}
+function getAuthToken(sp?: URLSearchParams | ReadonlyURLSearchParams): string | null {
+    // URL overrides for local testing
+    const fromUrl = normalizeBearer(sp?.get('bearer') || sp?.get('token'));
+    if (fromUrl) return fromUrl;
+
+    // Dev env override
+    const fromEnv = normalizeBearer(process.env.NEXT_PUBLIC_DEBUG_BEARER || '');
+    if (fromEnv) return fromEnv;
+
+    if (typeof window === 'undefined') return null;
+    return (
+        normalizeBearer(sessionStorage.getItem('auth.accessToken')) ||
+        normalizeBearer(localStorage.getItem('auth.accessToken')) ||
+        normalizeBearer(sessionStorage.getItem('accessToken')) ||
+        normalizeBearer(localStorage.getItem('accessToken')) ||
+        normalizeBearer(localStorage.getItem('jwt')) ||
+        normalizeBearer(getCookie('access_token')) ||
+        normalizeBearer(getCookie('token')) ||
+        normalizeBearer(getCookie('Authorization')) ||
+        null
+    );
 }
 
-const nameOf = (o: any) =>
-    o.customerName || o.name || o.title || `Order #${o.id ?? ''}`;
-const countOf = (o: any) => o.itemCount ?? o.items?.length ?? o.quantity ?? 1;
-const amountOf = (o: any) => o.totalAmount ?? o.amount ?? o.total ?? 0;
-const statusOf = (o: any) => o.status ?? o.orderStatus ?? o.stage ?? '—';
-const dueOf = (o: any) =>
-    o.dueOn ?? o.dueDate ?? o.deliveryDate ?? o.eta ?? '';
+export default function DeliveryTomorrowPage() {
+    const router = useRouter();
+    const sp = useSearchParams();
 
-const toAbsolute = (p: string) =>
-    new URL(p.startsWith('/') ? p : `/${p}`, API_ORIGIN).toString();
+    const [orders, setOrders] = useState<OrderLite[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [err, setErr] = useState<string | null>(null);
 
-const photoOf = (o: any): string | null => {
-    const raw =
-        o.customerPhotoUrl ||
-        o.customer?.photoUrl ||
-        o.photoUrl ||
-        o.customer?.avatarUrl ||
-        o.customer?.imageUrl ||
-        o.imageUrl ||
-        o.photo ||
-        null;
-    if (!raw || typeof raw !== 'string') return null;
-    return raw.startsWith('http') ? raw : toAbsolute(raw);
-};
+    const shopId = sp.get('shopId') ?? String(process.env.NEXT_PUBLIC_DEFAULT_SHOP_ID ?? '1');
+    const [limit, setLimit] = useState<number>(Number(sp.get('limit') ?? 10) || 10);
+    const [page, setPage] = useState<number>(Number(sp.get('page') ?? 0) || 0);
 
-export default async function Page({
-                                       searchParams,
-                                   }: {
-    searchParams: Promise<Record<string, string | string[] | undefined>>;
-}) {
-    const sp = await searchParams;
-    const c = await cookies();
+    const qs = useMemo(() => {
+        const p = new URLSearchParams();
+        p.set('limit', String(limit));
+        p.set('page', String(page));
+        return p.toString();
+    }, [limit, page]);
 
-    // Auth
-    const accessToken = c.get('access_token')?.value;
-    const jSessionId = c.get('JSESSIONID')?.value;
-    const tbAuth = c.get('tb_auth')?.value;
-    if (!accessToken && !jSessionId && !tbAuth) {
-        redirect('/login?redirect=/orders/delivery-tomorrow');
-    }
+    useEffect(() => {
+        const controller = new AbortController();
+        async function load() {
+            try {
+                setLoading(true);
+                setErr(null);
 
-    // shopId: URL > cookie > JWT > default
-    const spShopRaw = sp?.shopId;
-    const spShopStr = Array.isArray(spShopRaw) ? spShopRaw[0] : spShopRaw;
-    const qShop =
-        typeof spShopStr === 'string' && spShopStr !== ''
-            ? Number(spShopStr)
-            : undefined;
-    const cookieShop = c.get('shop_id')?.value
-        ? Number(c.get('shop_id')!.value)
-        : undefined;
-    const jwtShop = shopIdFromJwt(accessToken);
-    const shopId =
-        qShop ??
-        cookieShop ??
-        jwtShop ??
-        Number(process.env.NEXT_PUBLIC_DEFAULT_SHOP_ID ?? 1);
+                const token = getAuthToken(sp);
+                if (!token) {
+                    setErr('Login required: no token found. Add ?bearer=YOUR_JWT or set localStorage.accessToken.');
+                    setOrders([]);
+                    return;
+                }
 
-    const page = Number(sp.page ?? 0);
-    const limit = Number(sp.limit ?? 10);
+                const url = api(`/api/dashboard/orders/tomorrow?shopId=${encodeURIComponent(shopId)}&${qs}`);
+                const res = await fetch(url, {
+                    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+                    signal: controller.signal,
+                });
 
-    // Headers for server-to-server fetch
-    const headers = new Headers({ Accept: 'application/json' });
-    if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`);
-    const cookieHeader = [
-        jSessionId ? `JSESSIONID=${jSessionId}` : undefined,
-        tbAuth ? `tb_auth=${tbAuth}` : undefined,
-    ]
-        .filter(Boolean)
-        .join('; ');
-    if (cookieHeader) headers.set('Cookie', cookieHeader);
+                if (!res.ok) {
+                    const t = await res.text().catch(() => '');
+                    throw new Error(t || `Failed to load delivery tomorrow orders (${res.status})`);
+                }
 
-    // API call (Delivery Tomorrow)
-    const url = api(`/api/dashboard/orders/tomorrow?shopId=${shopId}&page=${page}&limit=${limit}`);
-    const res = await fetch(url, { headers, cache: 'no-store' });
+                const json = await res.json().catch(() => null);
 
-    if (res.status === 401 || res.status === 403) {
-        redirect(`/login?redirect=${encodeURIComponent(`/orders/delivery-tomorrow?shopId=${shopId}`)}`);
-    }
-    if (!res.ok) {
-        throw new Error(`Failed to load tomorrow's delivery orders (${res.status})`);
-    }
+                // Accept common shapes
+                const arr: any[] =
+                    Array.isArray(json) ? json :
+                        Array.isArray(json?.data?.content) ? json.data.content :
+                            Array.isArray(json?.content) ? json.content :
+                                Array.isArray(json?.orders) ? json.orders :
+                                    Array.isArray(json?.items) ? json.items :
+                                        Array.isArray(json?.data) ? json.data :
+                                            [];
 
-    const payload = (await res.json().catch(() => null)) as OrdersResponse | null;
-    const items: any[] = payload?.data?.content ?? [];
+                setOrders(arr);
+            } catch (e: any) {
+                if (e?.name !== 'AbortError') setErr(e?.message || 'Failed to load delivery tomorrow orders');
+            } finally {
+                setLoading(false);
+            }
+        }
+        load();
+        return () => controller.abort();
+    }, [shopId, qs, sp]);
+
+    // keep URL in sync when user changes page/limit
+    useEffect(() => {
+        const p = new URLSearchParams();
+        p.set('shopId', shopId);
+        p.set('limit', String(limit));
+        p.set('page', String(page));
+        const href = `/orders/delivery-tomorrow?${p.toString()}`;
+        window.history.replaceState(null, '', href);
+    }, [shopId, limit, page]);
+
+    const onBack = () => router.back();
 
     return (
-        <main className={styles.page}>
-            <div className={styles.topBar} />
-            <header className={styles.header}>
-                <Link
-                    href={`/dashboard?shopId=${shopId}`}
-                    className={styles.backBtn}
-                    aria-label="Back"
+        <main style={pageWrap}>
+            {/* Header like All Orders */}
+            <div style={topBar} />
+            <div style={appBar}>
+                <button type="button" onClick={onBack} aria-label="Back" style={iconBtn}>←</button>
+                <div style={brand}>TailorBook</div>
+                <div style={{ width: 36 }} /> {/* spacer */}
+            </div>
+
+            {loading ? (
+                <div style={{ display: 'grid', gap: 10 }}>
+                    {Array.from({ length: limit }).map((_, i) => (
+                        <div key={i} style={rowSkeleton}>
+                            <div style={skelAvatar} />
+                            <div style={{ flex: 1 }}>
+                                <div style={skel(14, 180)} />
+                                <div style={{ height: 6 }} />
+                                <div style={skel(12, 220)} />
+                            </div>
+                            <div style={skel(14, 80)} />
+                        </div>
+                    ))}
+                </div>
+            ) : err ? (
+                <div style={errorBox}>{err}</div>
+            ) : (
+                <OrdersList title="Delivery Tomorrow" items={orders} emptyText="No Order Found" />
+            )}
+
+            {/* Pagination */}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
+                <button
+                    type="button"
+                    style={ghostBtn}
+                    onClick={() => setPage((p) => Math.max(0, p - 1))}
+                    disabled={page === 0 || loading}
                 >
-                    ←
-                </Link>
-                <h1 className={styles.brand}>TailorBook</h1>
-                <button className={styles.searchBtn} aria-label="Search">
-                    🔍
+                    ‹ Prev
                 </button>
-            </header>
-
-            <section className={styles.titleSection}>
-                <h2 className={styles.pageTitle}>Delivery Tomorrow</h2>
-            </section>
-
-            <section className={styles.list}>
-                {items.length === 0 ? (
-                    <div className={styles.empty}>No Order Found</div>
-                ) : (
-                    items.map((o, i) => {
-                        const name = nameOf(o);
-                        const photo = photoOf(o);
-                        return (
-                            <article key={o.id ?? i} className={styles.card}>
-                                <div className={styles.thumb}>
-                                    <Avatar name={name} photoUrl={photo} size={64} rounding={12} />
-                                </div>
-                                <div className={styles.cardBody}>
-                                    <div className={styles.title}>{name}</div>
-                                    <div className={styles.subtitle}>Pant ({countOf(o)})</div>
-                                    <div className={styles.row}>
-                                        <span className={styles.statusDot} /> {statusOf(o)}
-                                    </div>
-                                    <div className={styles.meta}>
-                                        ৳ {amountOf(o)} ({countOf(o)} items)
-                                    </div>
-                                    {dueOf(o) && (
-                                        <div className={styles.meta}>
-                                            Due On {String(dueOf(o)).slice(0, 10)}
-                                        </div>
-                                    )}
-                                </div>
-                                <button className={styles.viewBtn}>View</button>
-                            </article>
-                        );
-                    })
-                )}
-            </section>
+                <button
+                    type="button"
+                    style={ghostBtn}
+                    onClick={() => setPage((p) => p + 1)}
+                    disabled={loading || orders.length < limit}
+                >
+                    Next ›
+                </button>
+                <select
+                    value={limit}
+                    onChange={(e) => setLimit(Number(e.target.value))}
+                    style={limitSel}
+                    disabled={loading}
+                >
+                    {[5, 10, 20].map((n) => (
+                        <option key={n} value={n}>{n}/page</option>
+                    ))}
+                </select>
+            </div>
         </main>
     );
 }
+
+/* Inline styles copied from All Orders page */
+const pageWrap: React.CSSProperties = { maxWidth: 900, margin: '0 auto', padding: '0 14px 20px' };
+const topBar: React.CSSProperties = { height: 18, background: '#5b21b6', position: 'sticky', top: 0, zIndex: 50 };
+const appBar: React.CSSProperties = {
+    position: 'sticky',
+    top: 18,
+    zIndex: 49,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    padding: '12px 0',
+    background: '#fff',
+    borderBottom: '1px solid #f1f5f9',
+};
+const iconBtn: React.CSSProperties = {
+    height: 36,
+    width: 36,
+    borderRadius: 10,
+    border: '1px solid #e5e7eb',
+    background: '#fff',
+    display: 'grid',
+    placeItems: 'center',
+    fontWeight: 800,
+    cursor: 'pointer',
+};
+const brand: React.CSSProperties = { fontSize: 28, fontWeight: 900, letterSpacing: 0.5, color: '#0f172a' };
+
+const ghostBtn: React.CSSProperties = {
+    height: 36,
+    padding: '0 12px',
+    borderRadius: 10,
+    border: '1px solid #e5e7eb',
+    background: '#fff',
+    color: '#111827',
+    fontWeight: 800,
+    cursor: 'pointer',
+};
+const limitSel: React.CSSProperties = { height: 36, padding: '0 10px', borderRadius: 10, border: '1px solid #e5e7eb', background: '#fff', color: '#111827', fontWeight: 700 };
+
+const errorBox: React.CSSProperties = { border: '1px solid #fecaca', background: '#fef2f2', borderRadius: 12, padding: 12, color: '#991B1B', fontWeight: 700 };
+
+const rowSkeleton: React.CSSProperties = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 12,
+    padding: '10px 12px',
+    border: '1px solid #e5e7eb',
+    borderRadius: 12,
+    background: '#fff',
+};
+const skel = (h: number, w: number): React.CSSProperties => ({
+    height: h,
+    width: w,
+    borderRadius: 6,
+    background: 'linear-gradient(90deg,#f3f4f6,#eee,#f3f4f6)',
+    animation: 'pulse 1.3s infinite',
+});
+const skelAvatar: React.CSSProperties = { ...skel(36, 36) };

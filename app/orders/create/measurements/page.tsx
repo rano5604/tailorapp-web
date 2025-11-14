@@ -77,21 +77,25 @@ export default function MeasurementsPage() {
     }
 
     function renderNumeric(p: ItemParam) {
-        const v = getVal(p.id)
-        const sugg: string[] = suggestionsForParam(p)
-        const hasSuggest = sugg.length > 0
-        const isInch = (p.unit ?? '').toLowerCase() === 'inch'
+        const raw = state.measurementValues?.[String(p.id)];
+        const nv: string | number =
+            raw === undefined || raw === null
+                ? ''
+                : typeof raw === 'number'
+                    ? raw
+                    : typeof raw === 'string'
+                        ? raw
+                        : '';
 
-        const nv: string | number | undefined =
-            typeof v === 'number' ? v :
-                (typeof v === 'string' ? v : undefined)
+        const sugg: string[] = suggestionsForParam(p);
+        const hasSuggest = sugg.length > 0;
+        const isInch = (p.unit ?? '').toLowerCase() === 'inch';
 
         return (
             <div className={styles.paramCard}>
                 <div className={styles.paramName} style={{ marginBottom: 6 }}>{p.nameEn}</div>
 
                 <div className={styles.numStack}>
-                    {/* Input group line: input + fraction buttons + unit */}
                     <div className={styles.numLine}>
                         <div className={styles.numGroup}>
                             <input
@@ -102,11 +106,12 @@ export default function MeasurementsPage() {
                                 placeholder={p.unit ? `Enter (${p.unit})` : 'Enter value'}
                                 value={nv}
                                 onChange={(e) => {
-                                    const s = e.target.value
-                                    if (s === '') setVal(p.id, '')
-                                    else {
-                                        const num = Number(s)
-                                        setVal(p.id, Number.isFinite(num) ? num : '')
+                                    const s = (e.currentTarget as HTMLInputElement).value;
+                                    if (s === '') {
+                                        setMeasurementValues({ [String(p.id)]: '' });
+                                    } else {
+                                        const n = Number(s);
+                                        setMeasurementValues({ [String(p.id)]: Number.isFinite(n) ? n : '' });
                                     }
                                 }}
                             />
@@ -118,31 +123,30 @@ export default function MeasurementsPage() {
                         {p.unit && <span className={styles.unitRight}>{p.unit}</span>}
                     </div>
 
-                    {/* Suggestion chips */}
                     {hasSuggest && (
                         <div className={styles.chips}>
                             {sugg.map((s) => {
-                                const label = isInch ? `${s}″` : s
-                                const isActive = String(v ?? '') === s
+                                const label = isInch ? `${s}″` : s;
+                                const isActive = String(raw ?? '') === s;
                                 return (
                                     <button
                                         key={`${p.id}-${s}`}
                                         type="button"
                                         className={`${styles.chip} ${isActive ? styles.chipActive : ''}`}
                                         onClick={() => {
-                                            const num = Number(s)
-                                            setVal(p.id, Number.isFinite(num) ? num : s)
+                                            const n = Number(s);
+                                            setMeasurementValues({ [String(p.id)]: Number.isFinite(n) ? n : s });
                                         }}
                                     >
                                         {label}
                                     </button>
-                                )
+                                );
                             })}
                         </div>
                     )}
                 </div>
             </div>
-        )
+        );
     }
 
     function renderBoolean(p: ItemParam) {

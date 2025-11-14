@@ -46,6 +46,7 @@ export type OrderItem = {
 
 export type CreateOrderState = {
     shopId?: number
+    customerId?: number
     phone: string
     name: string
     gender: Gender

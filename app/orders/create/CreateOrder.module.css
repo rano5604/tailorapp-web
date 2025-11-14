@@ -1224,3 +1224,63 @@ body {
 
 /* Smaller icons inside tiny buttons */
 .ctaBtn svg{ width: 14px; height: 14px; }
+/* Actions row container */
+.itemActions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+/* Base pill (both Edit and Delete) */
+.smallActionBtn {
+    appearance: none;
+    display: inline-flex;          /* row layout */
+    align-items: center;           /* vertical center */
+    gap: 8px;                      /* space between icon and text */
+    white-space: nowrap;           /* keep icon + text on one line */
+    line-height: 1;                /* avoid tall inline line box */
+    height: 36px;
+    padding: 0 12px;
+    border-radius: 12px;
+    border: 1px solid #e5e7eb;
+    background: #fff;
+    color: #111827;
+    font-weight: 800;
+    box-shadow: 0 1px 2px rgba(0,0,0,.06);
+    transition: transform .05s ease, box-shadow .15s ease, background .15s ease, color .15s ease;
+}
+.smallActionBtn:hover { box-shadow: 0 2px 6px rgba(0,0,0,.08); }
+.smallActionBtn:active { transform: translateY(1px); }
+
+/* Danger variant (Delete) */
+.smallActionBtn.danger {
+    border: none;
+    background: #ef4444;
+    color: #fff;
+    box-shadow: 0 4px 10px rgba(239,68,68,.3);
+}
+.smallActionBtn.danger:hover { filter: brightness(.98); }
+
+/* Icon bubble */
+.pillIcon {
+    display: inline-flex;          /* keep icon inline with text */
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 9999px;
+    background: #f3f4f6;          /* gray circle for Edit */
+    color: inherit;
+}
+/* Delete: white circle + red icon */
+.pillIconDanger {
+    background: #fff;
+    color: #ef4444;
+}
+
+/* Make sure the SVG doesn’t add extra inline height */
+.pillIcon svg {
+    display: block;
+    width: 14px;
+    height: 14px;
+}
