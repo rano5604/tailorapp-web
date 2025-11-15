@@ -3,7 +3,8 @@ import { cookies } from 'next/headers';
 import { redirect, notFound } from 'next/navigation';
 import Link from 'next/link';
 import type { CSSProperties } from 'react';
-import EditButton from './EditButton.client';
+import PayButtonWrapper from './PayButtonWrapper.client';
+import ClothImagePreview from './ClothImagePreview.client';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -98,7 +99,6 @@ export default async function OrderDetailPage({
                                                   params,
                                                   searchParams,
                                               }: {
-    // In your app these are Promises — unwrap them.
     params: Promise<{ orderId: string }>;
     searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
@@ -158,9 +158,8 @@ export default async function OrderDetailPage({
             <div style={topBar} />
             <header style={appBar}>
                 <Link href="/dashboard" aria-label="Back" style={iconBtn}>←</Link>
-                {/* CHANGED: show the actual Order ID here */}
                 <h1 style={brand}>Order {String(vm.orderId || slug)}</h1>
-                <EditButton orderId={String(vm.orderId)} />
+                <PayButtonWrapper />
             </header>
 
             {/* Customer Information */}
@@ -181,35 +180,36 @@ export default async function OrderDetailPage({
                         {vm.items.map((it, i) => (
                             <div key={`${it.title}-${i}`} style={{ paddingBottom: 6 }}>
                                 <div style={itemRow}>
-                                    <div style={{ fontWeight: 800, color: '#0f172a' }}>{it.title}</div>
-                                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                                        <div style={{ fontWeight: 800, color: '#0f172a' }}>{formatBDT(it.amount)}</div>
-                                        {/* optional per-item edit button */}
-                                        <Link
-                                            href={`/orders/${encodeURIComponent(String(vm.orderId))}/edit?groupId=${encodeURIComponent(String(it.groupId ?? ''))}`}
-                                            style={itemEditBtn}
-                                        >
-                                            Edit
-                                        </Link>
+                                    <div>
+                                        <div style={{ fontWeight: 800, color: '#0f172a' }}>{it.title}</div>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                            <div style={{ color: '#6b7280', fontSize: 18 }}>
+                                                {it.measurements} Measurement{it.measurements === 1 ? '' : 's'}
+                                            </div>
+                                            {/* EDIT BUTTON MOVED BESIDE MEASUREMENTS */}
+                                            <Link
+                                                href={`/orders/${encodeURIComponent(String(vm.orderId))}/edit?groupId=${encodeURIComponent(String(it.groupId ?? ''))}`}
+                                                style={itemEditBtn}
+                                            >
+                                                Edit
+                                            </Link>
+                                        </div>
                                     </div>
-                                </div>
-                                <div style={{ color: '#6b7280' }}>
-                                    {it.measurements} Measurement{it.measurements === 1 ? '' : 's'}
+                                    <div style={{ fontWeight: 800, color: '#0f172a', fontSize: 18 }}>
+                                        {formatBDT(it.amount)}
+                                    </div>
                                 </div>
                                 {it.photoUrl ? (
                                     <div style={{ marginTop: 10 }}>
-                                        <img
+                                        <ClothImagePreview
                                             src={it.photoUrl}
                                             alt={`${it.title} cloth`}
                                             width={86}
                                             height={64}
-                                            style={{
-                                                width: 86, height: 64, objectFit: 'cover',
-                                                border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff',
-                                            }}
                                         />
                                     </div>
                                 ) : null}
+
                                 {i < vm.items.length - 1 ? <div style={itemSeparator} /> : null}
                             </div>
                         ))}
@@ -268,4 +268,16 @@ const itemSeparator: CSSProperties = { borderTop: '1px solid #e5e7eb', margin: '
 const itemEditBtn: CSSProperties = {
     height: 28, padding: '0 10px', borderRadius: 8, border: '1px solid #e5e7eb',
     background: '#fff', color: '#0f172a', fontWeight: 800, textDecoration: 'none',
+};
+const payBtn: CSSProperties = {
+    padding: '10px 32px',
+    background: '#1d4ed8',
+    color: '#fff',
+    fontWeight: 900,
+    fontSize: 18,
+    border: 'none',
+    borderRadius: 10,
+    cursor: 'pointer',
+    boxShadow: '0 2px 8px #0001',
+    letterSpacing: 1,
 };
