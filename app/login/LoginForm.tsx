@@ -7,7 +7,12 @@ import styles from './Login.module.css'
 export default function LoginForm() {
     const router = useRouter()
     const search = useSearchParams()
-    const redirectTo = search.get('redirect') ?? '/dashboard'
+
+    // Prefer provided redirect param, fallback to dashboard
+    const redirectParam = search.get('redirect')
+    const redirectTo = redirectParam && redirectParam.startsWith('/') && !redirectParam.startsWith('//')
+        ? redirectParam
+        : '/dashboard'
 
     // Your API expects "username" and "pin"
     const [username, setUsername] = useState('')
@@ -18,14 +23,15 @@ export default function LoginForm() {
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState<string | null>(null)
 
+    // Relaxed validation: accept email, phone, or any non-empty username
     const validate = () => {
-        if (!/^\S+@\S+\.\S+$/.test(username)) return 'Please enter a valid email address.'
+        if (!username.trim()) return 'Please enter your username.'
         if (!/^\d{4,6}$/.test(pin)) return 'PIN must be 4–6 digits.'
         return null
     }
 
     function setCookie(name: string, value: string, maxAgeSeconds: number) {
-        // Add ; Secure when you deploy under HTTPS
+        // In production on HTTPS, append `; Secure`
         document.cookie = `${name}=${encodeURIComponent(value)}; Path=/; Max-Age=${maxAgeSeconds}; SameSite=Lax`
     }
 
@@ -36,11 +42,13 @@ export default function LoginForm() {
             res.headers.get('X-Auth-Token') ||
             res.headers.get('x-auth-token') ||
             null
-
-        if (token && token.toLowerCase().startsWith('bearer ')) {
-            token = token.slice(7)
-        }
+        if (token && token.toLowerCase().startsWith('bearer ')) token = token.slice(7)
         return token
+    }
+
+    function normalizeBearer(token?: string | null) {
+        if (!token) return null
+        return /^Bearer\s/i.test(token) ? token : `Bearer ${token}`
     }
 
     function shopIdFromJwt(token?: string | null): string | undefined {
@@ -48,7 +56,6 @@ export default function LoginForm() {
         try {
             const parts = token.split('.')
             if (parts.length < 2) return undefined
-            // base64url → base64
             const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/')
             const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4)
             const json = atob(padded)
@@ -69,12 +76,13 @@ export default function LoginForm() {
         setLoading(true)
 
         try {
-            const LOGIN_URL = '/api/auth/login' // Next.js rewrite should proxy this to your backend
+            const LOGIN_URL = '/api/auth/login' // rewrite proxies to your backend
             const res = await fetch(LOGIN_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                credentials: 'include', // keep for server cookies (e.g., JSESSIONID)
+                credentials: 'include', // allow server to set HttpOnly cookies (e.g., JSESSIONID/tb_auth)
                 body: JSON.stringify({ username, pin }),
+                cache: 'no-store',
             })
 
             const isJson = (res.headers.get('content-type') || '').includes('application/json')
@@ -88,31 +96,33 @@ export default function LoginForm() {
                 throw new Error(msg)
             }
 
-            // 1) Token from headers or JSON
+            // 1) Pick token from headers or JSON (if backend returns it)
             let token = readTokenFromHeaders(res)
             if (!token && typeof body === 'object' && body) {
                 token = body?.data?.token || body?.token || null
             }
 
-            // 2) ShopId from body, or decode from JWT claims
+            // 2) Extract shopId from body or decode from JWT claims
             let shopId: string | undefined =
                 typeof body === 'object' && body
                     ? body?.data?.shopID ?? body?.data?.shopId ?? body?.data?.shop_id
                     : undefined
-            if (shopId == null) {
-                shopId = shopIdFromJwt(token)
-            }
+            if (shopId == null) shopId = shopIdFromJwt(token)
 
-            // 3) Persist cookies for server guards and links
+            // 3) Persist non-HttpOnly cookies so SSR/proxy can read them if needed
             const maxAge = remember ? 60 * 60 * 24 * 7 : 60 * 60 // 7d or 1h
-            if (token) setCookie('access_token', token, maxAge)
+            if (token) {
+                setCookie('access_token', token, maxAge)
+                const bearer = normalizeBearer(token)
+                if (bearer) setCookie('Authorization', bearer, maxAge) // helps your proxy/SSR read Authorization from cookies
+            }
             if (shopId != null) setCookie('shop_id', String(shopId), maxAge)
             if (!token && shopId == null) {
-                // last resort so guards let you in if backend uses only httpOnly cookies
+                // Last resort: allow guards to pass if backend set only HttpOnly cookies
                 setCookie('session_ok', '1', maxAge)
             }
 
-            // 4) Go to dashboard
+            // 4) Prefer redirect query; fallback to dashboard
             router.replace(redirectTo)
         } catch (err: any) {
             setError(err.message ?? 'Login failed')
@@ -131,13 +141,13 @@ export default function LoginForm() {
 
             <form className={styles.card} onSubmit={handleSubmit} noValidate>
                 <div className={styles.field}>
-                    <label htmlFor="username" className={styles.label}>Email Address</label>
+                    <label htmlFor="username" className={styles.label}>Username</label>
                     <input
                         id="username"
-                        type="email"
+                        type="text"
                         className={styles.input}
-                        placeholder="you@example.com"
-                        autoComplete="email"
+                        placeholder="email or phone or username"
+                        autoComplete="username"
                         value={username}
                         onChange={(e) => setUsername(e.target.value)}
                     />

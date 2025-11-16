@@ -210,7 +210,7 @@ const iconBtn: React.CSSProperties = {
     fontWeight: 800,
     cursor: 'pointer',
 };
-const brand: React.CSSProperties = { fontSize: 28, fontWeight: 900, letterSpacing: 0.5, color: '#0f172a' };
+const brand: React.CSSProperties = { fontSize: 28, fontWeight: 700, letterSpacing: 0.5, color: '#0f172a' };
 
 const ghostBtn: React.CSSProperties = {
     height: 36,

@@ -20,93 +20,152 @@ const rawOrigin =
 
 const API_ORIGIN = sanitizeOrigin(rawOrigin);
 
+function tryDecode(v?: string | null) {
+    if (!v) return v ?? null;
+    try { return decodeURIComponent(v); } catch { return v; }
+}
 function normalizeBearer(maybe?: string | null) {
     if (!maybe) return null;
-    let t = maybe.trim().replace(/^"+|"+$/g, '');
+    let t = (tryDecode(maybe) || maybe).trim().replace(/^"+|"+$/g, '');
     if (!t) return null;
     if (!/^Bearer\s+/i.test(t)) t = `Bearer ${t}`;
     return t;
 }
 
+function buildTarget(src: string): URL | null {
+    try {
+        if (/^https?:\/\//i.test(src)) return new URL(src);
+        const path = src.startsWith('/') ? src : `/${src}`;
+        return new URL(path, API_ORIGIN);
+    } catch {
+        return null;
+    }
+}
+
+function isAllowed(target: URL): boolean {
+    try {
+        const allowed = new URL(API_ORIGIN).origin;
+        return target.origin === allowed;
+    } catch {
+        return false;
+    }
+}
+
+function buildForwardHeaders(req: NextRequest, explicitBearer?: string | null) {
+    // Prefer explicit bearer (query/header), then cookie/header on request
+    const cookieAuth =
+        req.cookies.get('Authorization')?.value ||
+        req.cookies.get('access_token')?.value ||
+        req.cookies.get('tb_access_token')?.value ||
+        req.cookies.get('auth_token')?.value ||
+        req.cookies.get('token')?.value ||
+        null;
+
+    const headerBearer = normalizeBearer(
+        req.headers.get('authorization') || req.headers.get('Authorization')
+    );
+    const bearer = normalizeBearer(explicitBearer) || headerBearer || normalizeBearer(cookieAuth);
+
+    const h = new Headers();
+
+    // Pass ALL cookies through (prevents dropping upstream-required cookies)
+    const incomingCookieHeader = req.headers.get('cookie');
+    if (incomingCookieHeader) h.set('Cookie', incomingCookieHeader);
+
+    // Authorization (optional)
+    if (bearer) h.set('Authorization', bearer);
+
+    // Accept headers (use generic to avoid 406s)
+    h.set('Accept', req.headers.get('accept') || 'image/*,*/*;q=0.8');
+
+    // Forward caching and range validators
+    const pass = ['if-none-match', 'if-modified-since', 'range', 'accept-language'];
+    pass.forEach((k) => {
+        const v = req.headers.get(k);
+        if (v) h.set(k, v);
+    });
+
+    // Optional: forward UA (some CDNs vary on UA)
+    const ua = req.headers.get('user-agent');
+    if (ua) h.set('User-Agent', ua);
+
+    return h;
+}
+
+async function proxyImage(req: NextRequest, method: 'GET' | 'HEAD') {
+    const url = new URL(req.url);
+    const src = url.searchParams.get('src');
+    const bearerParam = url.searchParams.get('b') || url.searchParams.get('bearer'); // optional
+
+    if (!src) return new NextResponse('Missing src', { status: 400 });
+
+    const target = buildTarget(src);
+    if (!target) return new NextResponse('Invalid src', { status: 400 });
+
+    if (!isAllowed(target)) {
+        return new NextResponse('Forbidden origin', { status: 403 });
+    }
+
+    const fwdHeaders = buildForwardHeaders(req, bearerParam);
+
+    const upstream = await fetch(target.toString(), {
+        method,
+        headers: fwdHeaders,
+        // stream and follow redirects (common for signed URLs/CDNs)
+        redirect: 'follow',
+        cache: 'no-store',
+    });
+
+    // For non-OK, relay the upstream status and body to help debugging
+    if (!upstream.ok && upstream.status !== 304) {
+        const text = await upstream.text().catch(() => 'Upstream error');
+        return new NextResponse(text, { status: upstream.status });
+    }
+
+    // Preserve important headers
+    const ct = upstream.headers.get('content-type') ?? 'image/jpeg';
+    const cl = upstream.headers.get('content-length') ?? undefined;
+    const etag = upstream.headers.get('etag') ?? undefined;
+    const lm = upstream.headers.get('last-modified') ?? undefined;
+    const cr = upstream.headers.get('content-range') ?? undefined;
+    const disp = upstream.headers.get('content-disposition') ?? 'inline';
+
+    // Cache for a short time; include Vary to keep per-auth/cookie variants distinct
+    const baseHeaders: Record<string, string> = {
+        'Content-Type': ct,
+        ...(cl ? { 'Content-Length': cl } : {}),
+        ...(etag ? { ETag: etag } : {}),
+        ...(lm ? { 'Last-Modified': lm } : {}),
+        ...(cr ? { 'Content-Range': cr } : {}),
+        'Cache-Control': 'public, max-age=300',
+        'Cross-Origin-Resource-Policy': 'cross-origin',
+        Vary: 'Authorization, Cookie, Range, Accept, Accept-Language',
+        'Content-Disposition': disp,
+    };
+
+    // HEAD responses should not include a body
+    if (method === 'HEAD') {
+        return new NextResponse(null, { status: upstream.status, headers: baseHeaders });
+    }
+
+    // Stream body for GET
+    return new NextResponse(upstream.body, {
+        status: upstream.status,
+        headers: baseHeaders,
+    });
+}
+
 export async function GET(req: NextRequest) {
     try {
-        const url = new URL(req.url);
-        const src = url.searchParams.get('src');
-        const bearerParam = url.searchParams.get('b') || url.searchParams.get('bearer'); // optional token via query
-        if (!src) return new NextResponse('Missing src', { status: 400 });
+        return await proxyImage(req, 'GET');
+    } catch {
+        return new NextResponse('Failed to fetch image', { status: 502 });
+    }
+}
 
-        // Absolute or relative to API origin
-        let target: URL;
-        try {
-            target = /^https?:\/\//i.test(src)
-                ? new URL(src)
-                : new URL(src.startsWith('/') ? src : `/${src}`, API_ORIGIN);
-        } catch {
-            return new NextResponse('Invalid src', { status: 400 });
-        }
-
-        // Allow-list the upstream origin to avoid open proxy
-        const allowedOrigin = new URL(API_ORIGIN).origin;
-        if (target.origin !== allowedOrigin) {
-            return new NextResponse('Forbidden origin', { status: 403 });
-        }
-
-        // Auth from cookies
-        const tokenCookie =
-            req.cookies.get('access_token')?.value ||
-            req.cookies.get('Authorization')?.value ||
-            req.cookies.get('tb_access_token')?.value ||
-            req.cookies.get('auth_token')?.value ||
-            req.cookies.get('token')?.value ||
-            null;
-
-        const jsid = req.cookies.get('JSESSIONID')?.value;
-        const tbAuth = req.cookies.get('tb_auth')?.value;
-
-        // Also accept Authorization header or query param as fallback
-        const hdrBearer = normalizeBearer(req.headers.get('authorization') || req.headers.get('Authorization'));
-        const qpBearer = normalizeBearer(bearerParam);
-
-        const bearer = normalizeBearer(tokenCookie) || hdrBearer || qpBearer;
-
-        const fwdHeaders = new Headers();
-        fwdHeaders.set('Accept', 'image/*');
-        if (bearer) fwdHeaders.set('Authorization', bearer);
-
-        const cookieParts: string[] = [];
-        if (jsid) cookieParts.push(`JSESSIONID=${jsid}`);
-        if (tbAuth) cookieParts.push(`tb_auth=${tbAuth}`);
-        if (cookieParts.length) fwdHeaders.set('Cookie', cookieParts.join('; '));
-
-        const upstream = await fetch(target.toString(), {
-            headers: fwdHeaders,
-            cache: 'no-store',
-            redirect: 'follow',
-        });
-
-        if (!upstream.ok) {
-            const text = await upstream.text().catch(() => 'Upstream error');
-            return new NextResponse(text, { status: upstream.status });
-        }
-
-        const ct = upstream.headers.get('content-type') ?? 'image/jpeg';
-        const cl = upstream.headers.get('content-length') ?? undefined;
-        const etag = upstream.headers.get('etag') ?? undefined;
-        const lm = upstream.headers.get('last-modified') ?? undefined;
-
-        return new NextResponse(upstream.body, {
-            status: upstream.status,
-            headers: {
-                'Content-Type': ct,
-                ...(cl ? { 'Content-Length': cl } : {}),
-                ...(etag ? { ETag: etag } : {}),
-                ...(lm ? { 'Last-Modified': lm } : {}),
-                'Cache-Control': 'public, max-age=300',
-                'Cross-Origin-Resource-Policy': 'cross-origin',
-                Vary: 'Authorization, Cookie',
-                'Content-Disposition': 'inline',
-            },
-        });
+export async function HEAD(req: NextRequest) {
+    try {
+        return await proxyImage(req, 'HEAD');
     } catch {
         return new NextResponse('Failed to fetch image', { status: 502 });
     }
