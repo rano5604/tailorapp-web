@@ -1,4 +1,3 @@
-// app/api/proxy/orders/[orderId]/items/[itemId]/route.ts
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 
