@@ -1,14 +1,16 @@
+// app/api/proxy/orders/[orderId]/items/[itemId]/route.ts
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const ORIGIN =
+const ORIGIN = (
     process.env.API_BASE ||
     process.env.NEXT_PUBLIC_TAILORAPP_API ||
     process.env.NEXT_PUBLIC_API_ORIGIN ||
-    'http://localhost:8083';
+    'http://localhost:8083'
+).replace(/\/+$/, '');
 
 function tryDecode(v?: string | null) { if (!v) return v ?? null; try { return decodeURIComponent(v); } catch { return v; } }
 function normalizeBearer(raw?: string | null) {
@@ -17,29 +19,41 @@ function normalizeBearer(raw?: string | null) {
     return /^Bearer\s/i.test(val) ? val : `Bearer ${val}`;
 }
 
-async function forward(req: NextRequest, orderId: string, itemId: string, method: 'PATCH' | 'PUT') {
+function buildHeaders(req: NextRequest) {
+    const h = new Headers({ Accept: 'application/json', 'Content-Type': 'application/json; charset=utf-8' });
+
+    const incomingCookie = req.headers.get('cookie');
+    if (incomingCookie) h.set('Cookie', incomingCookie);
+
     const headerAuth = req.headers.get('authorization');
     const cookieAuth = req.cookies.get('Authorization')?.value || req.cookies.get('access_token')?.value || null;
     const bearer = normalizeBearer(headerAuth || cookieAuth);
-    const incomingCookie = req.headers.get('cookie') || '';
+    if (bearer) h.set('Authorization', bearer);
+
     const csrfCookie =
         req.cookies.get('XSRF-TOKEN')?.value ||
         req.cookies.get('xsrf-token')?.value ||
         req.cookies.get('csrf-token')?.value ||
         null;
 
-    const headers = new Headers({ Accept: 'application/json', 'Content-Type': 'application/json' });
-    if (incomingCookie) headers.set('Cookie', incomingCookie);
-    if (bearer) headers.set('Authorization', bearer);
-    if (csrfCookie && !req.headers.get('x-xsrf-token') && !req.headers.get('x-csrf-token')) headers.set('X-XSRF-TOKEN', csrfCookie);
+    if (csrfCookie && !req.headers.get('x-xsrf-token') && !req.headers.get('x-csrf-token')) {
+        h.set('X-XSRF-TOKEN', csrfCookie);
+    } else {
+        ['x-xsrf-token', 'x-csrf-token', 'x-xcsrf-token'].forEach((k) => {
+            const v = req.headers.get(k);
+            if (v) h.set(k, v);
+        });
+    }
+    return h;
+}
 
-    const body = await req.json().catch(() => ({}));
-
+async function forward(req: NextRequest, orderId: string, itemId: string, method: 'PATCH' | 'PUT') {
+    const headers = buildHeaders(req);
+    const bodyText = await req.text().catch(() => '');
     const upstream = await fetch(
-        `${ORIGIN.replace(/\/+$/, '')}/api/orders/${encodeURIComponent(orderId)}/items/${encodeURIComponent(itemId)}`,
-        { method, headers, body: JSON.stringify(body), cache: 'no-store' }
+        `${ORIGIN}/api/orders/${encodeURIComponent(orderId)}/items/${encodeURIComponent(itemId)}`,
+        { method, headers, body: bodyText || '{}', cache: 'no-store' }
     );
-
     const text = await upstream.text().catch(() => '');
     return new NextResponse(text, {
         status: upstream.status,
@@ -47,9 +61,12 @@ async function forward(req: NextRequest, orderId: string, itemId: string, method
     });
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: { orderId: string; itemId: string } }) {
-    return forward(req, params.orderId, params.itemId, 'PATCH');
+export async function PATCH(req: NextRequest, context: { params: Promise<{ orderId: string; itemId: string }> }) {
+    const { orderId, itemId } = await context.params;
+    return forward(req, orderId, itemId, 'PATCH');
 }
-export async function PUT(req: NextRequest, { params }: { params: { orderId: string; itemId: string } }) {
-    return forward(req, params.orderId, params.itemId, 'PUT');
+
+export async function PUT(req: NextRequest, context: { params: Promise<{ orderId: string; itemId: string }> }) {
+    const { orderId, itemId } = await context.params;
+    return forward(req, orderId, itemId, 'PUT');
 }
